@@ -7,10 +7,19 @@
 #    distribution, for details about the copyright.
 #
 
-## Code generator. Hacked together and produce Nim as string for now. Macro
+## Code generator. Hacked together and produces Nim as string for now. Macro
 ## support will follow.
 
 import nfa
+
+type
+  TVariables* = enum
+    vaNone, vaCurrChar, vaNextChar, vaPrevChar, vaFillBuffer
+  VarArray* = array[TVariables, string]
+
+const
+  VarToName*: VarArray = ["", "CURRCHAR", "NEXTCHAR",
+    "PREVCHAR", "FILLBUFFER"]
 
 proc charLit(c: char): string =
   case c
@@ -37,7 +46,7 @@ proc charSetLit(cc: set[char]; lastChar: var int): string =
   while true:
     if c1 in cc:
       var c2 = c1
-      while (c2 < MaxChar) and (succ(c2) in cc): c2 = succ(c2)
+      while c2 < MaxChar and succ(c2) in cc: c2 = succ(c2)
       if result.len > 1: result.add ", "
       if c1 == c2:
         if lastChar == 0: lastChar = c1.ord
@@ -51,14 +60,14 @@ proc charSetLit(cc: set[char]; lastChar: var int): string =
         result.add charLit(c1) & ".." & charLit(c2)
       c1 = c2
     if c1 >= MaxChar: break
-    inc(c1)
+    inc c1
   result.add "}"
 
-proc getCmp(x: set[char]): string =
+proc getCmp(vars: VarArray; x: set[char]): string =
   var lastChar = 0
-  result = "input[i] in " & charSetLit(x, lastChar)
+  result = vars[vaCurrChar] & " in " & charSetLit(x, lastChar)
   if lastChar > 0:
-    result = "input[i] == " & charLit(chr(lastChar))
+    result = vars[vaCurrChar] & " == " & charLit(chr(lastChar))
 
 proc `&=`(x: var string; args: openArray[string]) =
   for a in args: x.add a
@@ -66,10 +75,10 @@ proc `&=`(x: var string; args: openArray[string]) =
 template pat(args: varargs[string, `$`]) {.dirty.} =
   res &= args
 
-proc genMatcher*(a: TDFA; res: var string) =
-  pat "proc matches(input: string): int =\n"
+proc genMatcher*(a: TDFA; vars: VarArray; rules: openArray[string];
+                 res: var string) =
+  # XXX generate fillBuffer instruction!
   pat "  var state: range[1..", a.stateCount, "] = ", a.startState, "\n"
-  pat "  var i = 0\n"
   pat "  while true:\n"
   pat "    case state\n"
 
@@ -77,7 +86,8 @@ proc genMatcher*(a: TDFA; res: var string) =
     pat "    of ", src, ":\n"
     let rule = getRule(a, src)
     if rule >= 1:
-      pat "      return ", rule, "\n"
+      pat rules[rule-1]
+      pat "      break\n"
     else:
       var ifs = 0
       for dest in countup(1, a.stateCount):
@@ -85,8 +95,8 @@ proc genMatcher*(a: TDFA; res: var string) =
         if cs != {}:
           inc ifs
           pat((if ifs == 1: "      if " else: "      elif "),
-            getCmp(cs), ": inc i; state = ", dest, "\n")
+            getCmp(vars, cs), ": ", vars[vaNextChar],"; state = ", dest, "\n")
       if ifs > 0:
-        pat "      else: return 0\n"
+        pat "      else: break\n"
       else:
-        pat "      return 0\n"
+        pat "      break\n"

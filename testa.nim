@@ -77,7 +77,3 @@ proc main =
     echo re.matchLen(inp, thaRe)
 
 main()
-
-#var txt = open("testA.dot", fmWrite)
-#convertDFAtoDOT(o, "optimized", txt)
-#close(txt)
