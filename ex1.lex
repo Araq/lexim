@@ -13,25 +13,40 @@
   alnum = {letter}|{digit}
   exp = [eE][+-]?{digit}+
   any = [\0-\255]
+  space = [\32\t]
 @end
 
 type
   TokType = enum
+    tkNone, tkSpaces,
     tkIf, tkElif, tkWhile, tkIntLit, tkFloatLit, tkStrLit, tkIdent
 
-proc parse(input: string): TokType =
-  var i = 0
+proc parse(input: string; i: var int): TokType =
 @section rules
-  "if": return tkIf
-  "elif": return tkElif
-  "while": return tkWhile
-  {digit}+: return tkIntLit
-  {digit}+"@"{alnum}+: return tkIntLit
-  {digit}+(\.{digit}+{exp}?|{exp}): return tkFloatLit
+  "if": result = tkIf
+  "elif": result = tkElif
+  "while": result = tkWhile
+  {digit}+: result = tkIntLit
+  {digit}+"@"{alnum}+: result = tkIntLit
+  {digit}+(\.{digit}+{exp}?|{exp}): result = tkFloatLit
 
-  {letter}+{alnum}*: return tkIdent
-  [rR] \" .* \": return tkStrLit
-  \" .* [^\\]\" | \"\": return tkStrLit
-  [rR] \"\"\" {any}* \"\"\": return tkStrLit
+  {letter}+{alnum}*: result = tkIdent
+
+  {space}+: result = tkSpaces
+
+  [rR] \" .* \": result = tkStrLit
+
+  \" .* [^\\]\" | \"\": result = tkStrLit
+
+  [rR] \"\"\" {any}* \"\"\": result = tkStrLit
 @end
+
+const
+  testInput = """some identifier 12  34.5  3e100"""
+
+var pos = 0
+while true:
+  let tok = parse(testInput, pos)
+  echo tok
+  if tok == tkNone: break
 

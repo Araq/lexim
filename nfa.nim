@@ -63,7 +63,7 @@ proc auxRegExprToNFA(r: PRegExpr; a: var TNFA; currState: int): int =
     result = auxRegExprToNFA(r.a, a, result)
     result = auxRegExprToNFA(r.b, a, result)
   of reCClass:
-    assert(not ('\0' in r.cc[]))
+    #assert(not ('\0' in r.cc[]))
     incl(a.trans[result]['\0'], result + 1)
     inc(result)
     for c in countup('\x01', '\xFF'):

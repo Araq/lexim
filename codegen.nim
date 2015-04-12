@@ -10,12 +10,15 @@
 ## Code generator. Hacked together and produces Nim as string for now. Macro
 ## support will follow.
 
-import nfa
+import nfa, regexprs
 
 type
   TVariables* = enum
     vaNone, vaCurrChar, vaNextChar, vaPrevChar, vaFillBuffer
   VarArray* = array[TVariables, string]
+  TRule* = object
+    match*: PRegExpr
+    action*: string
 
 const
   VarToName*: VarArray = ["", "CURRCHAR", "NEXTCHAR",
@@ -75,7 +78,7 @@ proc `&=`(x: var string; args: openArray[string]) =
 template pat(args: varargs[string, `$`]) {.dirty.} =
   res &= args
 
-proc genMatcher*(a: TDFA; vars: VarArray; rules: openArray[string];
+proc genMatcher*(a: TDFA; vars: VarArray; rules: openArray[TRule];
                  res: var string) =
   # XXX generate fillBuffer instruction!
   pat "  var state: range[1..", a.stateCount, "] = ", a.startState, "\n"
@@ -85,18 +88,17 @@ proc genMatcher*(a: TDFA; vars: VarArray; rules: openArray[string];
   for src in countup(1, a.stateCount):
     pat "    of ", src, ":\n"
     let rule = getRule(a, src)
-    if rule >= 1:
-      pat rules[rule-1]
-      pat "      break\n"
+    var ifs = 0
+    for dest in countup(1, a.stateCount):
+      let cs = getTransCC(a, src, dest)
+      if cs != {}:
+        inc ifs
+        pat((if ifs == 1: "      if " else: "      elif "),
+          getCmp(vars, cs), ": ", vars[vaNextChar],"; state = ", dest, "\n")
+    if ifs > 0:
+      pat "      else:\n"
     else:
-      var ifs = 0
-      for dest in countup(1, a.stateCount):
-        let cs = getTransCC(a, src, dest)
-        if cs != {}:
-          inc ifs
-          pat((if ifs == 1: "      if " else: "      elif "),
-            getCmp(vars, cs), ": ", vars[vaNextChar],"; state = ", dest, "\n")
-      if ifs > 0:
-        pat "      else: break\n"
-      else:
-        pat "      break\n"
+      pat "      if true:\n"
+    if rule >= 1:
+      pat "        ", rules[rule-1].action, "\n"
+    pat "        break\n"

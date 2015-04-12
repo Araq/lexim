@@ -260,7 +260,7 @@ proc parseCClass(buf: string; pos: var int): PRegExpr =
       cc = cc + {a[0]}
   if buf[pos] == ']': inc(pos)
   else: raise newException(RegexError, "] expected")
-  if caret: result = cclassExpr({'\0'..'\xFF'} - cc)
+  if caret: result = cclassExpr({'\1'..'\xFF'} - cc)
   else: result = cclassExpr(cc)
 
 proc parseNum(buf: string; pos: var int): int =
@@ -352,7 +352,7 @@ proc factor(buf: string; pos: var int): PRegExpr =
         m = parseNum(buf, pos)
         if getNext(buf, pos) == ',':
           inc(pos)
-          while (buf[pos] in {' ', '\t'}): inc(pos)
+          while buf[pos] in {' ', '\t'}: inc(pos)
           n = parseNum(buf, pos)
         else:
           n = m
@@ -366,7 +366,7 @@ proc term(buf: string; pos: var int): PRegExpr =
     termDelim = {'\0', ':', '$', '|', ')'} #,'/'
   if getNext(buf, pos) notin termDelim:
     result = factor(buf, pos)
-    while not (getNext(buf, pos) in termDelim):
+    while getNext(buf, pos) notin termDelim:
       result = catExpr(result, factor(buf, pos))
   else:
     result = epsExpr()

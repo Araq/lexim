@@ -20,18 +20,14 @@ import
 # new programming language.
 
 type
-  TRule* = object
-    match*: PRegExpr
-    action*: string
   TParser = object
     pos*: int                 # position in the input line
     linenumber*: int
     currRule*: int            # last parsed rule number + 1
-    indentation*, currIndent*: int
+    currIndent*: int
     line*: string             # variables:
     vars*: VarArray
     rules*: seq[TRule]
-    language*: string
     infile*, outfile*: string # input and output filenames
     inp*, outp*: File         # input and output files
 
@@ -128,12 +124,9 @@ proc parseMacro(p: var TParser) =
     error(p, getCurrentExceptionMsg())
 
 proc parseRule(p: var TParser) =
-  var
-    regexpr: PRegExpr
-    a: string
   try:
-    p.indentation = p.currIndent
-    regexpr = parseRegExpr(p.line, p.pos)
+    let indentation = p.currIndent
+    let regexpr = parseRegExpr(p.line, p.pos)
     rawSkipWhites(p)
     if regexpr == nil or regexpr.regType == reEps:
       readline(p)             # just skip empty lines
@@ -141,13 +134,14 @@ proc parseRule(p: var TParser) =
     if p.line[p.pos] == ':': inc(p.pos)
     else: error(p, ": expected")
     rawSkipWhites(p)
-    a = substr(p.line, p.pos, len(p.line))
+    var a = substr(p.line, p.pos, len(p.line))
     while true:
       readline(p)
       skipWhites(p)
-      if p.currIndent <= p.indentation or
+      if p.currIndent <= indentation or
           matchesDirective(p.line, "END", p.pos):
         break
+      a.add "\n"
       a.add(p.line)
     setlen(p.rules, p.currRule + 1)
     regexpr.rule = p.currRule + 1
@@ -159,7 +153,7 @@ proc parseRule(p: var TParser) =
 
 proc generateCodeAux(p: var TParser; d: TDFA) =
   var buffer = newStringOfCap(20_000)
-  genMatcher(d, p.vars, p.rules.map(proc (x: TRule): string = x.action), buffer)
+  genMatcher(d, p.vars, p.rules, buffer)
   write(p.outp, buffer)
 
 
@@ -238,6 +232,7 @@ proc main =
     p: TParser
     infile, outfile: string
   p.rules = @[]
+  p.line = newStringOfCap(120)
   var i = 1
   let paramc = paramCount()
   if paramc == 0:
