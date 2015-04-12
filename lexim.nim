@@ -233,6 +233,7 @@ proc main =
     infile, outfile: string
   p.rules = @[]
   p.line = newStringOfCap(120)
+  for i in 0..high(p.vars): p.vars[i] = ""
   var i = 1
   let paramc = paramCount()
   if paramc == 0:

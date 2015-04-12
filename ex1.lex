@@ -42,7 +42,7 @@ proc parse(input: string; i: var int): TokType =
 @end
 
 const
-  testInput = """some identifier 12  34.5  3e100"""
+  testInput = """some identifier 12 while ifo 34.5  3e100 if"""
 
 var pos = 0
 while true:

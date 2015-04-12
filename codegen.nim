@@ -14,7 +14,7 @@ import nfa, regexprs
 
 type
   TVariables* = enum
-    vaNone, vaCurrChar, vaNextChar, vaPrevChar, vaFillBuffer
+    vaNone, vaCurrChar, vaNextChar, vaBeforeBreak, vaFillBuffer
   VarArray* = array[TVariables, string]
   TRule* = object
     match*: PRegExpr
@@ -22,7 +22,7 @@ type
 
 const
   VarToName*: VarArray = ["", "CURRCHAR", "NEXTCHAR",
-    "PREVCHAR", "FILLBUFFER"]
+    "BEFOREBREAK", "FILLBUFFER"]
 
 proc charLit(c: char): string =
   case c
@@ -81,7 +81,7 @@ template pat(args: varargs[string, `$`]) {.dirty.} =
 proc genMatcher*(a: TDFA; vars: VarArray; rules: openArray[TRule];
                  res: var string) =
   # XXX generate fillBuffer instruction!
-  pat "  var state: range[1..", a.stateCount, "] = ", a.startState, "\n"
+  pat "  var state {.goto.}: range[1..", a.stateCount, "] = ", a.startState, "\n"
   pat "  while true:\n"
   pat "    case state\n"
 
@@ -101,4 +101,6 @@ proc genMatcher*(a: TDFA; vars: VarArray; rules: openArray[TRule];
       pat "      if true:\n"
     if rule >= 1:
       pat "        ", rules[rule-1].action, "\n"
+    if vars[vaBeforeBreak].len > 0:
+      pat vars[vaBeforeBreak], "\n"
     pat "        break\n"
