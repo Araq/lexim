@@ -1,6 +1,4 @@
-* Rewrite NFA and DFA data structures to be able to use more than 255 states
-* don't map the '\0' character to the epsilon transition
+* support \A \Z \b properly
 * Try to make it run in Nim's VM
-* Make it a real regex engine supporting \A \Z \b and most importantly
-  captures!
+* add support for captures!
 * Testing, testing, testing.

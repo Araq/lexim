@@ -151,14 +151,14 @@ proc parseRule(p: var TParser) =
   except RegExError:
     error(p, getCurrentExceptionMsg())
 
-proc generateCodeAux(p: var TParser; d: TDFA) =
+proc generateCodeAux(p: var TParser; d: DFA) =
   var buffer = newStringOfCap(20_000)
   genMatcher(d, p.vars, p.rules, buffer)
   write(p.outp, buffer)
 
 
-var n: TNFA
-var d, o: TDFA
+var n: NFA
+var d, o: DFA
 
 proc generateCode(p: var TParser) =
   var bigRe: PRegExpr

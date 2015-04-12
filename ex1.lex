@@ -3,7 +3,6 @@
 @section codegen
   currChar = "input[i]"
   nextChar = "inc(i)"
-  prevChar = "dec(i)"
   fillBuffer = "i = fillBuffer(input, i)"
 @end
 

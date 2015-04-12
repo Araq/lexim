@@ -24,7 +24,8 @@ const
   VarToName*: VarArray = ["", "CURRCHAR", "NEXTCHAR",
     "BEFOREBREAK", "FILLBUFFER"]
 
-proc charLit(c: char): string =
+proc charLit(c: Alphabet): string =
+  let c = char(c)
   case c
   of '\b': result = "'\\b'"
   of '\t': result = "'\\t'"
@@ -41,11 +42,11 @@ proc charLit(c: char): string =
     else:
       result = "'" & $c & "'"
 
-proc charSetLit(cc: set[char]; lastChar: var int): string =
+proc charSetLit(cc: set[Alphabet]; lastChar: var int): string =
   const
-    MaxChar = '\xFF'
+    MaxChar = 0xFF
   result = "{"
-  var c1 = '\0'
+  var c1 = 0
   while true:
     if c1 in cc:
       var c2 = c1
@@ -66,11 +67,11 @@ proc charSetLit(cc: set[char]; lastChar: var int): string =
     inc c1
   result.add "}"
 
-proc getCmp(vars: VarArray; x: set[char]): string =
+proc getCmp(vars: VarArray; x: set[Alphabet]): string =
   var lastChar = 0
   result = vars[vaCurrChar] & " in " & charSetLit(x, lastChar)
   if lastChar > 0:
-    result = vars[vaCurrChar] & " == " & charLit(chr(lastChar))
+    result = vars[vaCurrChar] & " == " & charLit(lastChar)
 
 proc `&=`(x: var string; args: openArray[string]) =
   for a in args: x.add a
@@ -78,7 +79,7 @@ proc `&=`(x: var string; args: openArray[string]) =
 template pat(args: varargs[string, `$`]) {.dirty.} =
   res &= args
 
-proc genMatcher*(a: TDFA; vars: VarArray; rules: openArray[TRule];
+proc genMatcher*(a: DFA; vars: VarArray; rules: openArray[TRule];
                  res: var string) =
   # XXX generate fillBuffer instruction!
   pat "  var state {.goto.}: range[1..", a.stateCount, "] = ", a.startState, "\n"

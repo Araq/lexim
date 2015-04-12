@@ -15,68 +15,95 @@ const
 
 type
   TRuleIndex* = range[0..10_000]
-  TLabel* = range[0..maxLabel] # 0 is an invalid label number, indicating there is no
-                               # transition
+  TLabel* = range[0..maxLabel] # 0 is an invalid label number, indicating
+                               # there is no transition
   TLabelSet* = set[TLabel]    # max. size may be bigger in Nim
                               # transition tables: if label = 0,
                               # it is the start node
-  TDFA_Trans* = array[TLabel, array[char, TLabel]] # transitions for DFA's
-                                                   # label = 1 is the start node
-  TNFA_Trans* = array[TLabel, array[char, TLabelSet]] # transitions for NFA's
-                                                      # epsilon transitions have char index = \0
-                                                      # label 0 is the start node
+  DFA_Edge* = object
+    cond*: Alphabet
+    dest*: TLabel
+  DFA_Trans* = array[TLabel, seq[DFA_Edge]] # transitions for DFA's
+                                            # label = 1 is the start node
+
+  NFA_Edge* = object
+    cond*: Alphabet
+    dest*: TLabelSet
+  NFA_Trans* = array[TLabel, seq[NFA_Edge]] # transitions for NFA's
+                                            # label 0 is the start node
   TLabelToRule* = array[TLabel, TRuleIndex]
-  TDFA* = object
+  DFA* = object
     startState*: int          # start state; for some reason it won't always be 1
     stateCount*: int          # number of states; states are from 1 to stateCount
     ruleCount*: int           # number of rules; rule 0 means no match
-    trans*: TDFA_Trans
+    trans*: DFA_Trans
     toRules*: TLabelToRule
 
-  TNFA* = object              # 2 Megabytes is a bit much for this...
-                              # however, we will only have one...
-    trans*: TNFA_Trans
+  NFA* = object
+    trans*: NFA_Trans
     toRules*: TLabelToRule
 
-proc initNFA(a: var TNFA) = discard
-proc initDFA(a: var TDFA) = discard
+proc initNFA(a: var NFA) = discard
+proc initDFA(a: var DFA) = discard
 
-proc auxRegExprToNFA(r: PRegExpr; a: var TNFA; currState: int): int =
+proc addTrans(src: var seq[NFA_Edge]; c: Alphabet; d: TLabel) =
+  if src.isNil:
+    src = @[NFA_Edge(cond: c, dest: {d})]
+  else:
+    for i in 0 .. high(src):
+      if src[i].cond == c:
+        src[i].dest.incl d
+        return
+    src.add(NFA_Edge(cond: c, dest: {d}))
+    if c == alEpsilon and src.len != 1:
+      # make epsilon always the first transition to speed up later passes:
+      swap(src[0], src[src.high])
+
+proc addTrans(src: var seq[DFA_Edge]; c: Alphabet; d: TLabel) =
+  if src.isNil:
+    src = @[DFA_Edge(cond: c, dest: d)]
+  else:
+    for i in 0 .. high(src):
+      if src[i].cond == c:
+        src[i].dest = d
+        return
+    src.add(DFA_Edge(cond: c, dest: d))
+
+proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
   # helper that is recursive; returns the new current state
   result = currState
   assert(r != nil)
   if r == nil: return
   case r.regType
   of reEps:
-    incl(a.trans[result]['\0'], result + 1)
+    addTrans(a.trans[result], alEpsilon, result + 1)
     inc(result)
   of reChar:
-    incl(a.trans[result][r.c], result + 1)
+    addTrans(a.trans[result], r.c, result + 1)
     inc(result)
   of reStr:
     # string node
     for i in countup(0, <len(r.s)):
-      incl(a.trans[result][r.s[i]], result + 1)
+      addTrans(a.trans[result], Alphabet(r.s[i]), result + 1)
       inc(result)
   of reCat:
     # concatenation node
     result = auxRegExprToNFA(r.a, a, result)
     result = auxRegExprToNFA(r.b, a, result)
   of reCClass:
-    #assert(not ('\0' in r.cc[]))
-    incl(a.trans[result]['\0'], result + 1)
+    addTrans(a.trans[result], alEpsilon, result + 1)
     inc(result)
-    for c in countup('\x01', '\xFF'):
-      if c in r.cc[]:
-        incl(a.trans[result][c], result + 1)
+    for c in countup(0, 0xFF):
+      if char(c) in r.cc[]:
+        addTrans(a.trans[result], c, result + 1)
     inc(result)
   of reStar:
     # star node
     # we draw one transition too much, which shouldn't be wrong
     let aa = auxRegExprToNFA(r.a, a, result)
-    incl(a.trans[result]['\0'], aa + 1)
-    incl(a.trans[aa]['\0'], aa + 1)
-    incl(a.trans[aa + 1]['\0'], result)
+    addTrans(a.trans[result], alEpsilon, aa + 1)
+    addTrans(a.trans[aa], alEpsilon, aa + 1)
+    addTrans(a.trans[aa + 1], alEpsilon, result)
     result = aa + 1
   of rePlus:
     # plus node
@@ -91,114 +118,89 @@ proc auxRegExprToNFA(r: PRegExpr; a: var TNFA; currState: int): int =
     # I don't understand why we need this epsilon transition here, but
     # without it, the algorithm doesn't work (the literature also says
     # this transition is needed, but doesn't give any explanation)
-    incl(a.trans[result]['\0'], result + 1)
+    addTrans(a.trans[result], alEpsilon, result + 1)
     inc(result)
     let oldState = result
     let aa = auxRegExprToNFA(r.a, a, result)
     let bb = auxRegExprToNFA(r.b, a, aa + 1)
-    incl(a.trans[oldState]['\0'], aa + 1)
-    incl(a.trans[aa]['\0'], bb + 1)
-    incl(a.trans[bb]['\0'], bb + 1)
+    addTrans(a.trans[oldState], alEpsilon, aa + 1)
+    addTrans(a.trans[aa], alEpsilon, bb + 1)
+    addTrans(a.trans[bb], alEpsilon, bb + 1)
     result = bb + 1
   else: assert(false)
   if r.rule != 0: a.toRules[result] = r.rule
 
-proc regExprToNFA*(r: PRegExpr; a: var TNFA) =
-  #var
-  #  startState, endState: Integer;
-  #
-  #  startState := 0;
-  #  endState := 0;
+proc regExprToNFA*(r: PRegExpr; a: var NFA) =
   initNFA(a)
-  discard auxRegExprToNFA(r, a, 0)    #, startState, endState
+  discard auxRegExprToNFA(r, a, 0)
 
-proc printDFA(a: TDFA) =
-  echo("number of states: ", a.stateCount)
-  echo("number of rules: ", a.ruleCount)
-  for L in countup(0, maxLabel):
-    for c in countup('\x01', '\xFF'):
-      if a.trans[L][c] != 0: echo(L, c, a.trans[L][c])
-    if a.toRules[L] != 0: echo(L, " rule: ", a.toRules[L])
-
-proc getTransCC*(a: TDFA; source, dest: TLabel): set[char] =
+proc getTransCC*(a: DFA; source, dest: TLabel): set[Alphabet] =
   result = {}
-  for c in countup('\0', '\xFF'):
-    if a.trans[source][c] == dest: incl(result, c)
+  for x in a.trans[source]:
+    if x.dest == dest: result.incl x.cond
 
-proc getRule*(a: TDFA; s: TLabel): int = a.toRules[s]
+proc getRule*(a: DFA; s: TLabel): int = a.toRules[s]
 
-proc getStateName(a: TDFA; s: TLabel): string =
-  if a.toRules[s] == 0: result = 's' & $s
-  else: result = 's' & $s & '_' & $a.toRules[s]
-
-proc convertDFAtoDOT*(a: TDFA; name: string; txt: var File) =
-  var cs: set[char]
-  writeln(txt, "digraph ", name, " {")
-  for L in countup(1, a.stateCount):
-    if L == a.startState: writeln(txt, getStateName(a, L), " [shape=box];")
-    for M in countup(1, a.stateCount):
-      cs = getTransCC(a, L, M)
-      if cs != {}:
-        writeln(txt, getStateName(a, L), " -> ", getStateName(a, M),
-                " [label=\"", listing.charSetOrCharStr(cs), "\"];")
-  writeln(txt, '}')
-
-proc closure(a: TNFA; S: TLabelSet): TLabelSet =
+proc closure(a: NFA; S: TLabelSet): TLabelSet =
   var res: TLabelSet
   result = S
   while true:
     res = result
     for L in countup(0, maxLabel):
       if L in res:
-        result = result + a.trans[L]['\0']
+        if not a.trans[L].isNil and a.trans[L][0].cond == alEpsilon:
+          result = result + a.trans[L][0].dest
     if res == result: break
 
-proc DFAedge(a: TNFA; d: TLabelSet; c: char): TLabelSet =
+proc getDest(a: seq[NFA_Edge]; c: Alphabet): TLabelSet =
+  if a.isNil: return
+  for t in a:
+    if t.cond == c: return t.dest
+
+proc getDest(a: seq[DFA_Edge]; c: Alphabet): TLabel =
+  if a.isNil: return
+  for t in a:
+    if t.cond == c: return t.dest
+
+proc getDFAedge(a: NFA; d: TLabelSet; c: Alphabet): TLabelSet =
   var tmp: TLabelSet = {}
   for L in countup(0, maxLabel):
     if L in d:
-      tmp = tmp + a.trans[L][c]
+      tmp = tmp + getDest(a.trans[L], c)
   result = closure(a, tmp)
-
-type
-  TStates = array[0..500, TLabelSet]
 
 proc searchInStates(states: openarray[TLabelSet]; p: int; e: TLabelSet): int =
   # returns -1 if not found
-  for i in countup(low(states), p):
-    if states[i] == e:
-      return i
-  result = - 1
+  for i in countup(0, p):
+    if states[i] == e: return i
+  result = -1
 
-proc NFA_to_DFA*(a: TNFA; b: var TDFA) =
+proc NFA_to_DFA*(a: NFA; b: var DFA) =
   # Look into 'Modern compiler implementation in Java' for reference of
-  #  this algorithm.
+  # this algorithm.
   var
-    p, j, minRule: int
-    states: TStates
-    e: TLabelSet
-  states[0] = {}
-  states[1] = closure(a, {0.TLabel}) # 0 is the start state
-  p = 1
-  j = 0
+    states: seq[TLabelSet] = @[]
+  states.add({})
+  states.add closure(a, {0.TLabel}) # 0 is the start state
+  var p = 1
+  var j = 0
   while j <= p:
-    for c in countup('\x01', '\xFF'):
-      # '\0' does not belong to the alphabet!
-      # because it is the epsilon transition
-      e = DFAedge(a, states[j], c)
+    for c in countup(0, alEpsilon-1):
+      let e = getDFAedge(a, states[j], c)
       let i = searchInStates(states, p, e)
       if i >= 0:
-        b.trans[j][c] = i
+        addTrans(b.trans[j], c, i)
       else:
         inc(p)
+        if p >= states.len: setLen(states, p+1)
         states[p] = e
-        b.trans[j][c] = p
+        addTrans(b.trans[j], c, p)
     inc(j)
   for d in countup(low(TLabel), j - 1):
-    minRule = high(int)
+    var minRule = high(int)
     for i in countup(low(TLabel), high(TLabel)):
       if i in states[d]:
-        if (minRule > a.toRules[i]) and (a.toRules[i] != 0):
+        if minRule > a.toRules[i] and a.toRules[i] != 0:
           minRule = a.toRules[i]
     if minRule == high(int):
       b.toRules[d] = 0
@@ -208,11 +210,12 @@ proc NFA_to_DFA*(a: TNFA; b: var TDFA) =
   b.stateCount = j - 1
   b.startState = 1            # for some reason this is always 1
 
-proc getPreds(a: TDFA; s: TLabelSet; c: char): TLabelSet =
+proc getPreds(a: DFA; s: TLabelSet; c: Alphabet): TLabelSet =
   # computes the set of predecessors for the set s (under the character c)
   result = {}
   for i in countup(1, a.stateCount):
-    if a.trans[i][c] in s: incl(result, i)
+    for t in a.trans[i]:
+      if t.cond == c and t.dest in s: incl(result, i)
 
 proc card(s: TLabelSet; maxState: int): int =
   result = 0
@@ -227,7 +230,7 @@ proc choose(s: TLabelSet; maxState: int): TLabel =
       return i
   result = 0                  # invalid state
 
-proc optimizeDFA*(a: TDFA; b: var TDFA) =
+proc optimizeDFA*(a: DFA; b: var DFA) =
   # Optimizes the DFA a to produce a minimal DFA.
   # We use Hopcroft's algorithm; see the paper coming with this source.
   # We have different types of nodes: there is a one to one correspondence
@@ -251,7 +254,7 @@ proc optimizeDFA*(a: TDFA; b: var TDFA) =
     dec(wlen)
     s = w[wLen]
     setlen(w, wLen)           # remove s from w;
-    for c in countup('\x01', '\xFF'):
+    for c in countup(0, alEpsilon-1):
       I = getPreds(a, s, c)
       if I == {}:
         continue              # speed things up
@@ -286,10 +289,11 @@ proc optimizeDFA*(a: TDFA; b: var TDFA) =
       repr = choose(p[j], a.stateCount) # choose a representant of the set
       if a.startState in p[j]: b.startState = j + 1
       b.toRules[j + 1] = a.toRules[repr]
-      for c in countup('\x01', '\xFF'):
-        if a.trans[repr][c] != 0:
+      for c in countup(0, alEpsilon-1):
+        let dest = a.trans[repr].getDest(c)
+        if dest != 0:
           # test to speed things up
           for k in countup(0, plen - 1):
-            if a.trans[repr][c] in p[k]:
-              b.trans[j + 1][c] = k + 1
+            if dest in p[k]:
+              addTrans b.trans[j + 1], c, k + 1
               break

@@ -41,6 +41,8 @@ default precedences.
 import strutils
 
 type
+  Alphabet* = range[0..259] # usually a 'char', but \A, \Z, epsilon etc
+                            # are not in the range \0..\255
   TRegExprType* = enum
     reEps,                    # epsilon node
     reChar,                   # character node
@@ -55,7 +57,7 @@ type
   TRegExpr* = object
     regType*: TRegExprType
     a*, b*: PRegExpr          # some nodes have two successors
-    c*: char
+    c*: Alphabet
     s*: string
     cc*: ref set[char]
     rule*: int                # if >= 0 it is a final state;
@@ -63,6 +65,12 @@ type
 
   MacroRedefError* = object of ValueError
   RegexError* = object of ValueError
+
+const
+  alBegin* = Alphabet(256)   # \A
+  alEnd* = Alphabet(257)     # \Z
+  alWordBoundary* = Alphabet(258) # \b
+  alEpsilon* = Alphabet(259) # epsilon (not used by regex, but by NFA)
 
 type # there won't be many macros in the source, so a linked list will suffice
   PMacro* = ref TMacro
@@ -101,7 +109,7 @@ proc epsExpr*(): PRegExpr =
 
 proc charExpr*(c: char): PRegExpr =
   result = newExpr(reChar)
-  result.c = c
+  result.c = Alphabet(c)
 
 proc strExpr*(str: string): PRegExpr =
   if len(str) == 1:
