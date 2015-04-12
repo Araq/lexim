@@ -11,13 +11,15 @@ import
   os, strutils, regexprs, listing, nfa, codegen
 
 # This scanner/parser is primitive. It is line-based. Lines that it does
-# not understand are simply copied to the output. It could be made
-# more clever by using a scanner that understands its input language,
-# but then we would need a seperate scanner for each programming
-# language which would be almost as much work as writing the required
-# scanner in the first place. So we do the primitive way here.
-# That means that only the code generator needs to be modified for a
-# new programming language.
+# not understand are simply copied to the output.
+
+type # there won't be many macros in the source, so a linked list suffices
+  PMacro* = ref TMacro
+  TMacro = object
+    next: PMacro
+    name: string
+    value: PRegExpr
+  MacroRedefError* = object of ValueError
 
 type
   TParser = object
@@ -31,6 +33,26 @@ type
     infile*, outfile*: string # input and output filenames
     inp*, outp*: File         # input and output files
 
+var
+  macros*: PMacro
+
+proc findMacro(name: string): PRegExpr =
+  # list of all macros
+  var it = macros
+  while it != nil:
+    if it.name == name: return it.value
+    it = it.next
+
+proc addMacro(name: string; value: PRegExpr) =
+  if findMacro(name) != nil:
+    raise newException(MacroRedefError, "attempt to redefine \"" & name & '\"')
+  else:
+    var n: PMacro
+    new(n)
+    n.next = macros
+    macros = n
+    n.name = name
+    n.value = value
 
 proc rawError(msg: string) =
   writeln(stdout, msg)
@@ -116,8 +138,8 @@ proc parseMacro(p: var TParser) =
   else: error(p, "= expected")
   rawSkipWhites(p)
   try:
-    let value = regexprs.parseRegExpr(p.line, p.pos)
-    regexprs.addMacro(varname, value)
+    let value = regexprs.parseRegExpr(p.line, p.pos, findMacro)
+    addMacro(varname, value)
   except RegexError:
     error(p, getCurrentExceptionMsg())
   except MacroRedefError:
@@ -126,7 +148,7 @@ proc parseMacro(p: var TParser) =
 proc parseRule(p: var TParser) =
   try:
     let indentation = p.currIndent
-    let regexpr = parseRegExpr(p.line, p.pos)
+    let regexpr = parseRegExpr(p.line, p.pos, findMacro)
     rawSkipWhites(p)
     if regexpr == nil or regexpr.regType == reEps:
       readline(p)             # just skip empty lines

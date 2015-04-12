@@ -63,7 +63,6 @@ type
     rule*: int                # if >= 0 it is a final state;
                               # then it is the rule that was matched
 
-  MacroRedefError* = object of ValueError
   RegexError* = object of ValueError
 
 const
@@ -71,34 +70,6 @@ const
   alEnd* = Alphabet(257)     # \Z
   alWordBoundary* = Alphabet(258) # \b
   alEpsilon* = Alphabet(259) # epsilon (not used by regex, but by NFA)
-
-type # there won't be many macros in the source, so a linked list will suffice
-  PMacro* = ref TMacro
-  TMacro = object
-    next*: PMacro
-    name*: string
-    value*: PRegExpr
-
-
-var macros: PMacro
-
-proc findMacro(name: string): PMacro =
-  # list of all macros
-  var it = macros
-  while it != nil:
-    if it.name == name: return it
-    it = it.next
-
-proc addMacro*(name: string; value: PRegExpr) =
-  if findMacro(name) != nil:
-    raise newException(MacroRedefError, "attempt to redefine \"" & name & '\"')
-  else:
-    var n: PMacro
-    new(n)
-    n.next = macros
-    macros = n
-    n.name = name
-    n.value = value
 
 proc newExpr(regType: TRegExprType): PRegExpr =
   new(result)
@@ -170,6 +141,9 @@ proc mnExpr*(r: PRegExpr; m, n: int): PRegExpr =
       else: ri = catExpr(ri, r)
       result = altExpr(result, ri) # r{m,n} := r{m,n} | r^i,
                                    #   i=m+1,...,n
+
+type
+  MacroLookupProc* = proc (macroname: string): PRegExpr {.closure.}
 
 proc getNext(buf: string; pos: var int): char =
   while buf[pos] in {' ', '\t'}: inc(pos)
@@ -295,16 +269,18 @@ proc parseIdent(buf: string; pos: var int): string =
   else:
     raise newException(RegexError, "identifier expected")
 
-proc parseMacroCall(buf: string; pos: var int): PRegExpr =
+proc parseMacroCall(buf: string; pos: var int;
+                    findMacro: MacroLookupProc): PRegExpr =
   let name = parseIdent(buf, pos)
-  let m = findMacro(name)
-  if m != nil: result = m.value
-  else:
+  result = findMacro(name)
+  if result.isNil:
     raise newException(RegexError, "undefined macro: " & name)
 
-proc parseRegExpr*(buf: string; pos: var int): PRegExpr
+proc parseRegExpr*(buf: string; pos: var int;
+                   findMacro: MacroLookupProc): PRegExpr
 
-proc factor(buf: string; pos: var int): PRegExpr =
+proc factor(buf: string; pos: var int;
+            findMacro: MacroLookupProc): PRegExpr =
   var n, m: int
   case getNext(buf, pos)
   of '\"':
@@ -316,7 +292,7 @@ proc factor(buf: string; pos: var int): PRegExpr =
     result = cclassExpr({'\1'..'\xFF'}) # - {'\L'})
   of '(':
     inc(pos)                  # skip (
-    result = parseRegExpr(buf, pos)
+    result = parseRegExpr(buf, pos, findMacro)
     if getNext(buf, pos) == ')': inc(pos)
     else:
       raise newException(RegexError, ") expected")
@@ -325,7 +301,7 @@ proc factor(buf: string; pos: var int): PRegExpr =
   of '{':
     inc(pos)                  # skip {
     while (buf[pos] in {' ', '\t'}): inc(pos)
-    result = parseMacroCall(buf, pos)
+    result = parseMacroCall(buf, pos, findMacro)
     if getNext(buf, pos) == '}': inc(pos)
     else:
       raise newException(RegexError, "} expected")
@@ -369,22 +345,25 @@ proc factor(buf: string; pos: var int): PRegExpr =
       else: raise newException(RegexError, "} expected")
     else: break
 
-proc term(buf: string; pos: var int): PRegExpr =
+proc term(buf: string; pos: var int;
+          findMacro: MacroLookupProc): PRegExpr =
   const
     termDelim = {'\0', ':', '$', '|', ')'} #,'/'
   if getNext(buf, pos) notin termDelim:
-    result = factor(buf, pos)
+    result = factor(buf, pos, findMacro)
     while getNext(buf, pos) notin termDelim:
-      result = catExpr(result, factor(buf, pos))
+      result = catExpr(result, factor(buf, pos, findMacro))
   else:
     result = epsExpr()
 
-proc parseRegExpr(buf: string; pos: var int): PRegExpr =
-  result = term(buf, pos)
+proc parseRegExpr(buf: string; pos: var int;
+                 findMacro: MacroLookupProc): PRegExpr =
+  result = term(buf, pos, findMacro)
   while getNext(buf, pos) == '|':
     inc(pos)
-    result = altExpr(result, term(buf, pos))
+    result = altExpr(result, term(buf, pos, findMacro))
 
-proc parseRegExpr*(reg: string): PRegExpr =
+proc parseRegExpr*(reg: string;
+                   findMacro: MacroLookupProc): PRegExpr =
   var pos: int                # dummy
-  result = parseRegExpr(reg, pos)
+  result = parseRegExpr(reg, pos, findMacro)
