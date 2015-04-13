@@ -1,7 +1,7 @@
 
 import nfa, regexprs, listing, codegen
 
-proc initExample2(a: var TNFA) =
+proc initExample2(a: var NFA) =
   regexprs.addMacro("IDENT", parseRegExpr("[a-zA-Z_]"))
   regexprs.addMacro("E", parseRegExpr("[eE][+-]?[0-9]+"))
   let floatPat = parseRegExpr("[0-9]+ (\\.[0-9]+{e}? | { e })") # floating point numbers
@@ -19,8 +19,8 @@ proc initExample2(a: var TNFA) =
 const
   asRegex = "([a-zA-Z_][0-9A-Za-z_]*)|([0-9]+)|([0-9]+ (\\.[0-9]+([eE][+-]?[0-9]+)?|[eE][+-]?[0-9]+))|else|elif"
 
-var n: TNFA
-var d, o: TDFA
+var n: NFA
+var d, o: DFA
 
 initExample2(n)
 NFA_to_DFA(n, d)

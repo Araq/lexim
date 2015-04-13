@@ -1,4 +1,4 @@
 * support \A \Z \b properly
 * Try to make it run in Nim's VM
-* add support for captures!
+* add support for captures and backrefs!
 * Testing, testing, testing.

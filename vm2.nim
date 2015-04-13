@@ -8,16 +8,17 @@
 #
 
 ## Translates the DFA into a bytecode and then runs the bytecode.
+## Cannot support most re features and is so doesn't even compile anymore.
 import nfa, strutils, intsets
 
 type
-  TInstr* = object
+  Instr* = object
     d: uint16 # data to test against
     t: int16  # next state when match (true)
     f: int16  # next state when no match (false), if f < 0, return -f
 
   Bytecode* = object
-    code*: seq[TInstr]
+    code*: seq[Instr]
     data*: seq[set[char]]
     startAt*: int
 
@@ -29,7 +30,7 @@ proc genData(c: PCtx; data: set[char]): int =
   result = c.data.len
   c.data.add data
 
-proc genBytecode*(a: TDFA; res: PCtx) =
+proc genBytecode*(a: DFA; res: PCtx) =
   #doAssert a.startState == 1, "startState must be 1"
   var stateToLabel: seq[int16] = @[]
 
@@ -40,7 +41,7 @@ proc genBytecode*(a: TDFA; res: PCtx) =
       if cs != {}:
         let d = genData(res, cs)
         let next = res.code.len.int16 + 1
-        res.code.add(TInstr(d: d.uint16, t: dest.int16, f: next))
+        res.code.add(Instr(d: d.uint16, t: dest.int16, f: next))
     res.code[^1].f = -getRule(a, src).int16 - 1
   # Fixup the T jumps:
   for i in 0 .. res.code.high:

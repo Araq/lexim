@@ -43,6 +43,9 @@ type
     trans*: NFA_Trans
     toRules*: TLabelToRule
 
+  RegexFlag* = enum
+    supportCapture
+
 proc initNFA(a: var NFA) = discard
 proc initDFA(a: var DFA) = discard
 
@@ -69,12 +72,13 @@ proc addTrans(src: var seq[DFA_Edge]; c: Alphabet; d: TLabel) =
         return
     src.add(DFA_Edge(cond: c, dest: d))
 
-proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
+proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int;
+                     flags: set[RegexFlag]): int =
   # helper that is recursive; returns the new current state
   result = currState
   assert(r != nil)
   if r == nil: return
-  case r.regType
+  case r.kind
   of reEps:
     addTrans(a.trans[result], alEpsilon, result + 1)
     inc(result)
@@ -88,8 +92,8 @@ proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
       inc(result)
   of reCat:
     # concatenation node
-    result = auxRegExprToNFA(r.a, a, result)
-    result = auxRegExprToNFA(r.b, a, result)
+    result = auxRegExprToNFA(r.a, a, result, flags)
+    result = auxRegExprToNFA(r.b, a, result, flags)
   of reCClass:
     addTrans(a.trans[result], alEpsilon, result + 1)
     inc(result)
@@ -100,7 +104,7 @@ proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
   of reStar:
     # star node
     # we draw one transition too much, which shouldn't be wrong
-    let aa = auxRegExprToNFA(r.a, a, result)
+    let aa = auxRegExprToNFA(r.a, a, result, flags)
     addTrans(a.trans[result], alEpsilon, aa + 1)
     addTrans(a.trans[aa], alEpsilon, aa + 1)
     addTrans(a.trans[aa + 1], alEpsilon, result)
@@ -108,11 +112,11 @@ proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
   of rePlus:
     # plus node
     # constructed as M M* would be:
-    result = auxRegExprToNFA(catExpr(r.a, starExpr(r.a)), a, result)
+    result = auxRegExprToNFA(catExpr(r.a, starExpr(r.a)), a, result, flags)
   of reOpt:
     # option node
     # constructed as M | eps would be:
-    result = auxRegExprToNFA(altExpr(r.a, epsExpr()), a, result)
+    result = auxRegExprToNFA(altExpr(r.a, epsExpr()), a, result, flags)
   of reAlt:
     # (|) node
     # I don't understand why we need this epsilon transition here, but
@@ -121,23 +125,32 @@ proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
     addTrans(a.trans[result], alEpsilon, result + 1)
     inc(result)
     let oldState = result
-    let aa = auxRegExprToNFA(r.a, a, result)
-    let bb = auxRegExprToNFA(r.b, a, aa + 1)
+    let aa = auxRegExprToNFA(r.a, a, result, flags)
+    let bb = auxRegExprToNFA(r.b, a, aa + 1, flags)
     addTrans(a.trans[oldState], alEpsilon, aa + 1)
     addTrans(a.trans[aa], alEpsilon, bb + 1)
     addTrans(a.trans[bb], alEpsilon, bb + 1)
     result = bb + 1
-  else: assert(false)
+  of reCapture:
+    if supportCapture in flags:
+      addTrans(a.trans[result], alCaptureBegin, result + 1)
+      inc(result)
+      result = auxRegExprToNFA(r.a, a, result, flags)
+      addTrans(a.trans[result], alCaptureEnd, result + 1)
+      inc(result)
+    else:
+      result = auxRegExprToNFA(r.a, a, result, flags)
   if r.rule != 0: a.toRules[result] = r.rule
 
-proc regExprToNFA*(r: PRegExpr; a: var NFA) =
+proc regExprToNFA*(r: PRegExpr; a: var NFA; flags: set[RegexFlag]) =
   initNFA(a)
-  discard auxRegExprToNFA(r, a, 0)
+  discard auxRegExprToNFA(r, a, 0, flags)
 
 proc getTransCC*(a: DFA; source, dest: TLabel): set[Alphabet] =
   result = {}
-  for x in a.trans[source]:
-    if x.dest == dest: result.incl x.cond
+  if not a.trans[source].isNil:
+    for x in a.trans[source]:
+      if x.dest == dest: result.incl x.cond
 
 proc getRule*(a: DFA; s: TLabel): int = a.toRules[s]
 
