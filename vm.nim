@@ -23,6 +23,7 @@ type
     opcWordBound,   # \b match
     opcCaptureBegin # begin of capture '('
     opcCaptureEnd   # end of capture ')'
+    opcBackref      # \\1 match
 
   Bytecode* {.shallow.} = object
     code*: seq[Instr]
@@ -55,7 +56,7 @@ proc codeListing(c: Bytecode, result: var string, start=0; last = -1) =
       result.addf("\t$#\t$#\n", ($opc).substr(3), $c.data[x.regBx])
     of opcTestChar:
       result.addf("\t$#\t$#\n", ($opc).substr(3), $chr(x.regBx))
-    of opcTJmp, opcCaptureBegin, opcCaptureEnd:
+    of opcTJmp, opcCaptureBegin, opcCaptureEnd, opcBackref:
       result.addf("\t$#\tL$#\n", ($opc).substr(3), x.regBx)
     of opcBegin, opcEnd, opcWordBound:
       result.addf("\t$#\n", ($opc).substr(3))
@@ -111,22 +112,34 @@ proc genTest(res: var Bytecode; cs: set[Alphabet]; dest: int) =
     gABx(res, opcWordBound, genData(res, {'\1'..'\255'} - wordChars))
     gABx(res, opcTJmp, dest)
 
-proc genCapture(res: var Bytecode; cs: set[Alphabet]) =
+proc genCapture(res: var Bytecode; cs: set[Alphabet]; dest: int;
+                rule: var int) =
   if alCaptureBegin in cs:
-    gABx(res, opcCaptureBegin, res.captures)
+    assert rule > 0
+    gABx(res, opcCaptureBegin, rule-1)
+    gABx(res, opcTJmp, dest)
     inc res.captures
-  if alCaptureEnd in cs:
-    gABx(res, opcCaptureEnd, 0)
+    rule = 0
+  elif alCaptureEnd in cs:
+    assert rule > 0
+    gABx(res, opcCaptureEnd, rule-1)
+    gABx(res, opcTJmp, dest)
+    rule = 0
+  elif alBackref in cs:
+    assert rule > 0
+    gABx(res, opcBackref, rule-1)
+    gABx(res, opcTJmp, dest)
+    rule = 0
 
 proc genBytecode*(a: DFA; res: var Bytecode) =
   var stateToLabel = newSeq[int](a.stateCount)
 
   for src in countup(1, a.stateCount):
     stateToLabel[src-1] = res.code.len
-    let rule = getRule(a, src)
+    var rule = getRule(a, src)
     for dest in countup(1, a.stateCount):
       let cs = getTransCC(a, src, dest)
-      genCapture(res, cs)
+      genCapture(res, cs, dest, rule)
       # this implements the rather strange
       # "match longest but only sometimes" rule that regexes seem to have:
       if rule == 0 or rule == getRule(a, dest): genTest(res, cs, dest)
@@ -140,12 +153,20 @@ proc genBytecode*(a: DFA; res: var Bytecode) =
 
 type Action* = int #distinct range[1..32_000]
 
+proc backrefMatch(input: string; sp: int; capture: (int, int)): bool =
+  var i = capture[0]
+  var k = 0
+  while true:
+    if i > capture[1]: return true
+    if k >= input.len or input[k] != input[i]: return false
+    inc k
+    inc i
+
 proc execBytecode*(m: Bytecode; input: string;
                    captures: var seq[(int, int)],
                    start=0): tuple[a: Action, endPos: int] =
   var pc = m.startAt
   var sp = start
-  var captureStack = 0
   while true:
     let instr = m.code[pc]
     let opc = instr.opcode
@@ -190,19 +211,23 @@ proc execBytecode*(m: Bytecode; input: string;
       of opcCaptureBegin:
         setLen(captures, arg+1)
         captures[arg][0] = sp
-        captureStack = arg
-        inc pc, 2
+        pc = m.code[pc+1].regBx
       of opcCaptureEnd:
-        if captureStack >= 0: captures[captureStack][1] = sp
-        dec captureStack
-        inc pc
+        captures[arg][1] = sp-1
+        pc = m.code[pc+1].regBx
+      of opcBackref:
+        if arg < captures.len and backrefMatch(input, sp, captures[arg]):
+          pc = m.code[pc+1].regBx
+          inc sp, captures[arg][1] - captures[arg][0] + 1
+        else:
+          inc pc, 2
       else: assert false
 
 proc findMacro(s: string): PRegExpr = nil
 
-proc re*(regex: string): Bytecode =
-  let r = parseRegExpr(regex, findMacro)
-  r.rule = 1
+proc re*(regex: string; flags: set[RegexFlag] = {reExtended}): Bytecode =
+  let r = parseRegExpr(regex, findMacro, flags)
+  r.rule = 10
   var n: NFA
   regExprToNFA(r, n, {supportCapture})
 

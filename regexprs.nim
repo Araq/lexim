@@ -41,7 +41,7 @@ default precedences.
 import strutils
 
 type
-  Alphabet* = range[0..262] # usually a 'char', but \A, \Z, epsilon etc
+  Alphabet* = range[0..263] # usually a 'char', but \A, \Z, epsilon etc
                             # are not in the range \0..\255
   RegexKind* = enum
     reEps,                    # epsilon node
@@ -53,7 +53,8 @@ type
     reOpt,                    # option node
     reCat,                    # concatenation node
     reAlt,                    # alternatives node (|)
-    reCapture                 # (capture)
+    reCapture,                # (capture)
+    reBackref                 # \\backref
   PRegExpr* = ref TRegExpr
   TRegExpr* = object
     kind*: RegexKind
@@ -63,8 +64,23 @@ type
     cc*: ref set[char]
     rule*: int                # if >= 0 it is a final state;
                               # then it is the rule that was matched
+                              # also misused for captures and backrefs!
 
   RegexError* = object of ValueError
+  RegexFlag* = enum  ## how regexes are parsed
+    reExtended,      ## extended syntax support
+    reNoBackrefs,    ## always process \\1 as a character literal,
+                     ## not as back reference
+    reNoCaptures     ## () is the same as (?:)
+
+  MacroLookupProc* = proc (macroname: string): PRegExpr {.closure.} ## \
+    ## lookup proc that expands {macros}.
+
+  ReCtx = object
+    pos: int
+    flags: set[RegexFlag]
+    captures: int # count the captures to give them an index
+    findMacro: MacroLookupProc
 
 const
   alBegin* = Alphabet(256)   # \A
@@ -73,7 +89,8 @@ const
   alWordBoundaryNot* = Alphabet(259) # \B
   alCaptureBegin* = Alphabet(260)
   alCaptureEnd* = Alphabet(261)
-  alEpsilon* = Alphabet(262) # epsilon (not used by regex, but by NFA)
+  alBackRef* = Alphabet(262)
+  alEpsilon* = Alphabet(263) # epsilon (not used by regex, but by NFA)
 
 const
   wordChars* = {'A'..'Z', 'a'..'z', '0'..'9', '_', '\128', '\255'}
@@ -94,6 +111,11 @@ proc charExpr*(c: char): PRegExpr =
 proc charExpr*(c: Alphabet): PRegExpr =
   result = newExpr(reChar)
   result.c = c
+
+proc backrefExpr*(x: int): PRegExpr =
+  result = newExpr(reBackref)
+  #result.c = Alphabet(x)
+  result.rule = x
 
 proc strExpr*(str: string): PRegExpr =
   if len(str) == 1:
@@ -159,127 +181,130 @@ proc newCapture*(a: PRegExpr): PRegExpr =
   result = newExpr(reCapture)
   result.a = a
 
-type
-  MacroLookupProc* = proc (macroname: string): PRegExpr {.closure.}
-
-proc getNext(buf: string; pos: var int): char =
-  while buf[pos] in {' ', '\t'}: inc(pos)
-  result = buf[pos]
+proc getNext(buf: string; c: var ReCtx): char =
+  if reExtended in c.flags:
+    while buf[c.pos] in {' ', '\t'}: inc(c.pos)
+  result = buf[c.pos]
 
 proc error(msg: string) {.noinline.} =
   raise newException(RegexError, msg)
 
-proc getChar(buf: string; pos: var int; inClass: bool): PRegExpr =
+proc getChar(buf: string; c: var ReCtx; inClass: bool): PRegExpr =
   var val, i: int
-  while buf[pos] in {' ', '\t'}: inc(pos)
-  if buf[pos] != '\\':
-    result = charExpr(buf[pos])
-    inc(pos)
+  if reExtended in c.flags and not inClass:
+    while buf[c.pos] in {' ', '\t'}: inc(c.pos)
+  if buf[c.pos] != '\\':
+    result = charExpr(buf[c.pos])
+    inc(c.pos)
   else:
-    case buf[pos+1]
+    case buf[c.pos+1]
     of 'n':
       result = altExpr(strExpr("\C\L"), charExpr('\L'), charExpr('\C'))
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'r':
       result = charExpr('\r')
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'l', 'L':
       result = charExpr('\L')
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 't':
       result = charExpr('\t')
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'b':
       result = if inClass: charExpr('\b') else: charExpr(alWordBoundary)
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'B':
       result = if inClass: charExpr('\b') else: charExpr(alWordBoundaryNot)
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'e':
       result = charExpr('\e')
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'a', 'A':
       result = if inClass: charExpr('\a') else: charExpr(alBegin)
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'v':
       result = charExpr('\v')
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'f':
       result = charExpr('\f')
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'z', 'Z':
       if not inClass: result = charExpr(alEnd)
       else: error("\\Z not supported in character class")
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 's':
       result = cclassExpr(whitespace)
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'S':
       result = cclassExpr({'\1'..'\255'} - whitespace)
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'd':
       result = cclassExpr(digits)
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'D':
       result = cclassExpr({'\1'..'\255'} - digits)
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'w':
       result = cclassExpr(wordChars)
-      inc(pos, 2)
+      inc(c.pos, 2)
     of 'W':
       result = cclassExpr({'\1'..'\255'} - wordChars)
-      inc(pos, 2)
+      inc(c.pos, 2)
     of '0'..'9':
-      val = ord(buf[pos + 1]) - ord('0')
-      inc(pos, 2)
+      let startsWithZero = buf[c.pos+1] == '0'
+      val = ord(buf[c.pos + 1]) - ord('0')
+      inc(c.pos, 2)
       i = 1
-      while (i <= 3) and (buf[pos] in {'0'..'9'}):
-        val = val * 10 + ord(buf[pos]) - ord('0')
-        inc(pos)
+      while (i <= 4) and (buf[c.pos] in {'0'..'9'}):
+        val = val * 10 + ord(buf[c.pos]) - ord('0')
+        inc(c.pos)
         inc(i)
-      result = charExpr(char val)
-    else:
-      if buf[pos + 1] in {'\0'..'\x1F'}:
-        error "invalid character #" & toHex(buf[pos+1].ord, 2)
+      if startsWithZero or reNoBackrefs in c.flags:
+        result = charExpr(char val)
       else:
-        result = charExpr(buf[pos + 1])
-        inc(pos, 2)
+        result = backrefExpr(val)
+    else:
+      if buf[c.pos + 1] in {'\0'..'\x1F'}:
+        error "invalid character #" & toHex(buf[c.pos+1].ord, 2)
+      else:
+        result = charExpr(buf[c.pos + 1])
+        inc(c.pos, 2)
 
-proc parseStr(buf: string; pos: var int): PRegExpr =
+proc parseStr(buf: string; c: var ReCtx): PRegExpr =
   var s = ""
-  inc(pos)                    # skip "
-  while buf[pos] != '\"':
-    if buf[pos] in {'\0', '\C', '\L'}:
+  inc(c.pos)                    # skip "
+  while buf[c.pos] != '\"':
+    if buf[c.pos] in {'\0', '\C', '\L'}:
       error "\" expected"
-    let al = getChar(buf, pos, false)
+    let al = getChar(buf, c,false)
     if al.kind == reChar and al.c <= 255: s.add char(al.c)
     else: error "invalid regular expression " & buf
-  inc(pos)                    # skip "
+  inc(c.pos)                    # skip "
   result = strExpr(s)
 
-proc parseCClass(buf: string; pos: var int): PRegExpr =
+proc parseCClass(buf: string; c: var ReCtx): PRegExpr =
   # scan a character class
   var
     caret: bool
     cc: set[char]
-  inc(pos)                    # skip [
-  if getNext(buf, pos) == '^':
+  inc(c.pos)                    # skip [
+  if buf[c.pos] == '^':
     caret = true
-    inc(pos)
+    inc(c.pos)
   else:
     caret = false
-  while getNext(buf, pos) != ']':
-    if buf[pos] in {'\0', '\C', '\L'}:
+  while buf[c.pos] != ']':
+    if buf[c.pos] in {'\0', '\C', '\L'}:
       error "] expected"
-    let a = getChar(buf, pos, true)
+    let a = getChar(buf, c, true)
     if a.kind == reChar and a.c <= 255:
       incl(cc, a.c.char)
-      if getNext(buf, pos) == '-':
-        inc(pos)
-        if getNext(buf, pos) == ']':
+      if buf[c.pos] == '-':
+        inc(c.pos)
+        if buf[c.pos] == ']':
           incl(cc, '-')
           break
-        let b = getChar(buf, pos, true)
+        let b = getChar(buf, c, true)
         if b.kind == reChar and b.c <= 255:
           cc = cc + {a.c.char .. b.c.char}
         elif b.kind == reCClass:
@@ -291,139 +316,141 @@ proc parseCClass(buf: string; pos: var int): PRegExpr =
       cc = cc + a.cc[]
     else:
       error "invalid regular expression " & buf
-  if buf[pos] == ']': inc(pos)
+  if buf[c.pos] == ']': inc(c.pos)
   else: error "] expected"
   if caret: result = cclassExpr({'\1'..'\xFF'} - cc)
   else: result = cclassExpr(cc)
 
-proc parseNum(buf: string; pos: var int): int =
+proc parseNum(buf: string; c: var ReCtx): int =
   result = 0
-  if buf[pos] in {'0'..'9'}:
+  if buf[c.pos] in {'0'..'9'}:
     while true:
-      result = result * 10 + ord(buf[pos]) - ord('0')
-      inc(pos)
-      if not (buf[pos] in {'0'..'9'}): break
+      result = result * 10 + ord(buf[c.pos]) - ord('0')
+      inc(c.pos)
+      if buf[c.pos] notin {'0'..'9'}: break
   else:
     error "number expected"
 
-proc parseIdent(buf: string; pos: var int): string =
+proc parseIdent(buf: string; c: var ReCtx): string =
   result = ""
-  if buf[pos] in {'a'..'z', 'A'..'Z', '_'}:
+  if buf[c.pos] in {'a'..'z', 'A'..'Z', '_'}:
     while true:
-      case buf[pos]
+      case buf[c.pos]
       of 'a'..'z', 'A'..'Z', '0'..'9':
-        result.add toUpper(buf[pos])
-        inc(pos)
+        result.add toUpper(buf[c.pos])
+        inc(c.pos)
       of '_':
-        inc(pos)              # ignore _
+        inc(c.pos)              # ignore _
       else: break
   else:
     error "identifier expected"
 
-proc parseMacroCall(buf: string; pos: var int;
-                    findMacro: MacroLookupProc): PRegExpr =
-  let name = parseIdent(buf, pos)
-  result = findMacro(name)
+proc parseMacroCall(buf: string; c: var ReCtx): PRegExpr =
+  let name = parseIdent(buf, c)
+  result = c.findMacro(name)
   if result.isNil:
     error "undefined macro: " & name
 
-proc parseRegExpr*(buf: string; pos: var int;
-                   findMacro: MacroLookupProc): PRegExpr
+proc parseRegExpr*(buf: string; c: var ReCtx): PRegExpr
 
-proc factor(buf: string; pos: var int;
-            findMacro: MacroLookupProc): PRegExpr =
-  case getNext(buf, pos)
+proc factor(buf: string; c: var ReCtx): PRegExpr =
+  case getNext(buf, c)
   of '\"':
-    result = parseStr(buf, pos)
+    result = parseStr(buf, c)
   of '[':
-    result = parseCClass(buf, pos)
+    result = parseCClass(buf, c)
   of '.':
-    inc(pos)
+    inc(c.pos)
     result = cclassExpr({'\1'..'\xFF'}) # - {'\L'})
   of '(':
-    inc(pos)                  # skip (
-    var isCapture = true
-    if buf[pos] == '?' and buf[pos+1] == ':':
-      inc pos, 2
+    inc(c.pos)                  # skip (
+    var isCapture = reNoCaptures notin c.flags
+    if buf[c.pos] == '?' and buf[c.pos+1] == ':':
+      inc c.pos, 2
       isCapture = false
-    result = parseRegExpr(buf, pos, findMacro)
-    if getNext(buf, pos) == ')': inc(pos)
+    result = parseRegExpr(buf, c)
+    if getNext(buf, c) == ')': inc(c.pos)
     else: error ") expected"
-    if isCapture: result = newCapture(result)
+    if isCapture:
+      inc c.captures
+      result = newCapture(result)
+      result.rule = c.captures
   of '\\':
-    result = getChar(buf, pos, false)
+    result = getChar(buf, c, false)
   of '{':
-    inc(pos)                  # skip {
-    while (buf[pos] in {' ', '\t'}): inc(pos)
-    result = parseMacroCall(buf, pos, findMacro)
-    if getNext(buf, pos) == '}': inc(pos)
+    inc(c.pos)                  # skip {
+    while buf[c.pos] in {' ', '\t'}: inc(c.pos)
+    result = parseMacroCall(buf, c)
+    if getNext(buf, c) == '}': inc(c.pos)
     else: error "} expected"
   of '*', '+', '?':
-    error "escape " & buf[pos] & " with \\"
+    error "escape " & buf[c.pos] & " with \\"
   of '$':
     result = charExpr(alEnd)
-    inc(pos)
+    inc(c.pos)
   of '^':
     result = charExpr(alBegin)
-    inc(pos)
+    inc(c.pos)
   else:
-    result = charExpr(buf[pos])
-    inc(pos)
+    result = charExpr(buf[c.pos])
+    inc(c.pos)
   while true:
-    case getNext(buf, pos)    # case
+    case getNext(buf, c)
     of '*':
-      inc(pos)
+      inc(c.pos)
       result = starExpr(result)
     of '+':
-      inc(pos)
+      inc(c.pos)
       result = plusExpr(result)
     of '?':
-      inc(pos)
+      inc(c.pos)
       result = optExpr(result)
     of '{':
-      inc(pos)                # skip {
-      if getNext(buf, pos) notin {'0'..'9'}:
+      inc(c.pos)                # skip {
+      if getNext(buf, c) notin {'0'..'9'}:
         # a macro, but do not parse it here, but later to
         # keep the operator predecence:
         while true:           # back to {
                               # a single decrement might not do
                               # because of skipped whitespace
-          dec(pos)
-          if buf[pos] == '{': break
+          dec(c.pos)
+          if buf[c.pos] == '{': break
         break
       else:
         var n: int
-        let m = parseNum(buf, pos)
-        if getNext(buf, pos) == ',':
-          inc(pos)
-          while buf[pos] in {' ', '\t'}: inc(pos)
-          n = parseNum(buf, pos)
+        let m = parseNum(buf, c)
+        if getNext(buf, c) == ',':
+          inc(c.pos)
+          while buf[c.pos] in {' ', '\t'}: inc(c.pos)
+          n = parseNum(buf, c)
         else:
           n = m
         result = mnExpr(result, m, n)
-      if getNext(buf, pos) == '}': inc(pos)
+      if getNext(buf, c) == '}': inc(c.pos)
       else: error "} expected"
     else: break
 
-proc term(buf: string; pos: var int;
-          findMacro: MacroLookupProc): PRegExpr =
+proc term(buf: string; c: var ReCtx): PRegExpr =
   const
     termDelim = {'\0', ':', '|', ')'} #,'/'
-  if getNext(buf, pos) notin termDelim:
-    result = factor(buf, pos, findMacro)
-    while getNext(buf, pos) notin termDelim:
-      result = catExpr(result, factor(buf, pos, findMacro))
+  if getNext(buf, c) notin termDelim:
+    result = factor(buf, c)
+    while getNext(buf, c) notin termDelim:
+      result = catExpr(result, factor(buf, c))
   else:
     result = epsExpr()
 
-proc parseRegExpr(buf: string; pos: var int;
-                 findMacro: MacroLookupProc): PRegExpr =
-  result = term(buf, pos, findMacro)
-  while getNext(buf, pos) == '|':
-    inc(pos)
-    result = altExpr(result, term(buf, pos, findMacro))
+proc parseRegExpr(buf: string; c: var ReCtx): PRegExpr =
+  result = term(buf, c)
+  while getNext(buf, c) == '|':
+    inc(c.pos)
+    result = altExpr(result, term(buf, c))
 
-proc parseRegExpr*(reg: string;
-                   findMacro: MacroLookupProc): PRegExpr =
-  var pos: int                # dummy
-  result = parseRegExpr(reg, pos, findMacro)
+proc parseRegExpr*(reg: string; findMacro: MacroLookupProc;
+                   flags: set[RegexFlag] = {}): PRegExpr =
+  var c: ReCtx
+  c.pos = 0
+  c.flags = flags
+  c.findMacro = findMacro
+  c.captures = 0
+  result = parseRegExpr(reg, c)

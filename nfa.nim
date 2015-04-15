@@ -43,7 +43,7 @@ type
     trans*: NFA_Trans
     toRules*: TLabelToRule
 
-  RegexFlag* = enum
+  NfaFlag* = enum
     supportCapture
 
 proc initNFA(a: var NFA) = discard
@@ -73,7 +73,7 @@ proc addTrans(src: var seq[DFA_Edge]; c: Alphabet; d: TLabel) =
     src.add(DFA_Edge(cond: c, dest: d))
 
 proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int;
-                     flags: set[RegexFlag]): int =
+                     flags: set[NfaFlag]): int =
   # helper that is recursive; returns the new current state
   result = currState
   assert(r != nil)
@@ -119,9 +119,6 @@ proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int;
     result = auxRegExprToNFA(altExpr(r.a, epsExpr()), a, result, flags)
   of reAlt:
     # (|) node
-    # I don't understand why we need this epsilon transition here, but
-    # without it, the algorithm doesn't work (the literature also says
-    # this transition is needed, but doesn't give any explanation)
     addTrans(a.trans[result], alEpsilon, result + 1)
     inc(result)
     let oldState = result
@@ -133,16 +130,24 @@ proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int;
     result = bb + 1
   of reCapture:
     if supportCapture in flags:
+      assert r.rule > 0
       addTrans(a.trans[result], alCaptureBegin, result + 1)
+      a.toRules[result] = r.rule
       inc(result)
       result = auxRegExprToNFA(r.a, a, result, flags)
       addTrans(a.trans[result], alCaptureEnd, result + 1)
+      a.toRules[result] = r.rule
       inc(result)
     else:
       result = auxRegExprToNFA(r.a, a, result, flags)
+  of reBackref:
+    assert r.rule > 0
+    addTrans(a.trans[result], alBackref, result + 1)
+    a.toRules[result] = r.rule
+    inc(result)
   if r.rule != 0: a.toRules[result] = r.rule
 
-proc regExprToNFA*(r: PRegExpr; a: var NFA; flags: set[RegexFlag]) =
+proc regExprToNFA*(r: PRegExpr; a: var NFA; flags: set[NfaFlag]) =
   initNFA(a)
   discard auxRegExprToNFA(r, a, 0, flags)
 
