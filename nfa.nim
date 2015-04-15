@@ -14,6 +14,22 @@ const
   maxLabel* = 255
 
 type
+  Alphabet* = object
+    kind*: RegexKind
+    val*: char
+  # distinct int # char or special
+
+const
+  alEpsilon* = Alphabet(kind: reEps, val: '\0')  #  Alphabet(-1)
+  #alBegin* = Alphabet(kind: reBegin, val: '\0') #  Alphabet(256)   # \A
+  #alEnd* = Alphabet(kind: reEnd, val: '\0') # Alphabet(257)     # \Z
+  #alWordBoundary* = Alphabet(kind: reWordBoundary, val: '\0') # Alphabet(258) # \b
+  #alWordBoundaryNot* = Alphabet(259) # \B
+  #alCaptureBegin* = Alphabet(260)
+  #alCaptureEnd* = Alphabet(261)
+  #alBackRef* = Alphabet(262)
+
+type
   TRuleIndex* = range[0..10_000]
   TLabel* = range[0..maxLabel] # 0 is an invalid label number, indicating
                                # there is no transition
@@ -35,11 +51,13 @@ type
   DFA* = object
     startState*: int          # start state; for some reason it won't always be 1
     stateCount*: int          # number of states; states are from 1 to stateCount
+    captures, backrefs: int
     ruleCount*: int           # number of rules; rule 0 means no match
     trans*: DFA_Trans
     toRules*: TLabelToRule
 
   NFA* = object
+    captures, backrefs: int
     trans*: NFA_Trans
     toRules*: TLabelToRule
 
@@ -55,7 +73,7 @@ proc addTrans(src: var seq[NFA_Edge]; c: Alphabet; d: TLabel) =
         src[i].dest.incl d
         return
     src.add(NFA_Edge(cond: c, dest: {d}))
-    if c == alEpsilon and src.len != 1:
+    if c.kind == reEps and src.len != 1:
       # make epsilon always the first transition to speed up later passes:
       swap(src[0], src[src.high])
 
@@ -79,12 +97,15 @@ proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
     addTrans(a.trans[result], alEpsilon, result + 1)
     inc(result)
   of reChar:
-    addTrans(a.trans[result], r.c, result + 1)
+    addTrans(a.trans[result], Alphabet(kind: reChar, val: r.c), result + 1)
+    inc(result)
+  of reWordBoundary, reWordBoundaryNot, reBegin, reEnd:
+    addTrans(a.trans[result], Alphabet(kind: r.kind, val: '\0'), result + 1)
     inc(result)
   of reStr:
     # string node
     for i in countup(0, <len(r.s)):
-      addTrans(a.trans[result], Alphabet(r.s[i]), result + 1)
+      addTrans(a.trans[result], Alphabet(kind: reChar, val: r.s[i]), result + 1)
       inc(result)
   of reCat:
     # concatenation node
@@ -93,9 +114,9 @@ proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
   of reCClass:
     addTrans(a.trans[result], alEpsilon, result + 1)
     inc(result)
-    for c in countup(0, 0xFF):
-      if char(c) in r.cc[]:
-        addTrans(a.trans[result], c, result + 1)
+    for c in countup('\0', '\xFF'):
+      if c in r.cc[]:
+        addTrans(a.trans[result], Alphabet(kind: reChar, val: c), result + 1)
     inc(result)
   of reStar:
     # star node
@@ -124,19 +145,16 @@ proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
     addTrans(a.trans[aa], alEpsilon, bb + 1)
     addTrans(a.trans[bb], alEpsilon, bb + 1)
     result = bb + 1
-  of reCapture:
-    assert r.rule > 0
-    addTrans(a.trans[result], alCaptureBegin, result + 1)
-    a.toRules[result] = r.rule
+  of reCapture, reCaptureEnd:
+    a.captures = max(a.captures, int(r.c))
+    addTrans(a.trans[result], Alphabet(kind: reCapture, val: r.c), result+1)
     inc(result)
     result = auxRegExprToNFA(r.a, a, result)
-    addTrans(a.trans[result], alCaptureEnd, result + 1)
-    a.toRules[result] = r.rule
+    addTrans(a.trans[result], Alphabet(kind: reCaptureEnd, val: r.c), result+1)
     inc(result)
   of reBackref:
-    assert r.rule > 0
-    addTrans(a.trans[result], alBackref, result + 1)
-    a.toRules[result] = r.rule
+    a.backrefs = max(a.backrefs, int(r.c))
+    addTrans(a.trans[result], Alphabet(kind: reBackref, val: r.c), result + 1)
     inc(result)
   if r.rule != 0: a.toRules[result] = r.rule
 
@@ -144,11 +162,42 @@ proc regExprToNFA*(r: PRegExpr; a: var NFA) =
   initNFA(a)
   discard auxRegExprToNFA(r, a, 0)
 
-proc getTransCC*(a: DFA; source, dest: TLabel): set[Alphabet] =
-  result = {}
+when false:
+  proc getTransCC*(a: DFA; source, dest: TLabel): set[char] =
+    result = {}
+    if not a.trans[source].isNil:
+      for x in a.trans[source]:
+        if x.dest == dest and x.cond.kind == reChar: result.incl x.cond.val
+
+  iterator getTransConds*(a: DFA; source, dest: TLabel): Alphabet =
+    if not a.trans[source].isNil:
+      for x in a.trans[source]:
+        if x.dest == dest: yield x.cond
+
+proc allTransitions*(a: DFA; source, dest: TLabel): (seq[Alphabet], set[char]) =
+  result[0] = @[]
   if not a.trans[source].isNil:
+    result[1] = {}
+    var card = 0
+    var lastChar = -1
     for x in a.trans[source]:
-      if x.dest == dest: result.incl x.cond
+      if x.dest == dest:
+        if x.cond.kind == reChar:
+          inc card
+          if lastChar < 0: lastChar = int x.cond.val
+          result[1].incl x.cond.val
+        else:
+          result[0].add x.cond
+    if card == 1:
+      result[1] = {}
+      result[0].add Alphabet(kind: reChar, val: char lastChar)
+
+iterator allDests*(a: DFA; source: TLabel): TLabel =
+  if not a.trans[source].isNil:
+    # use a set to eliminate duplicates:
+    var dests: TLabelSet
+    for x in a.trans[source]: dests.incl x.dest
+    for d in dests: yield d
 
 proc getRule*(a: DFA; s: TLabel): int = a.toRules[s]
 
@@ -159,19 +208,19 @@ proc closure(a: NFA; S: TLabelSet): TLabelSet =
     res = result
     for L in countup(0, maxLabel):
       if L in res:
-        if not a.trans[L].isNil and a.trans[L][0].cond == alEpsilon:
+        if not a.trans[L].isNil and a.trans[L][0].cond.kind == reEps:
           result = result + a.trans[L][0].dest
     if res == result: break
 
 proc getDest(a: seq[NFA_Edge]; c: Alphabet): TLabelSet =
   if a.isNil: return
   for t in a:
-    if t.cond == c: return t.dest
+    if t.cond.kind == c.kind and t.cond.val == c.val: return t.dest
 
 proc getDest(a: seq[DFA_Edge]; c: Alphabet): TLabel =
   if a.isNil: return
   for t in a:
-    if t.cond == c: return t.dest
+    if t.cond.kind == c.kind and t.cond.val == c.val: return t.dest
 
 proc getDFAedge(a: NFA; d: TLabelSet; c: Alphabet): TLabelSet =
   var tmp: TLabelSet = {}
@@ -186,6 +235,33 @@ proc searchInStates(states: openarray[TLabelSet]; p: int; e: TLabelSet): int =
     if states[i] == e: return i
   result = -1
 
+proc fullAlphabet(captures, backrefs: int): seq[Alphabet] =
+  result = @[]
+  var c: Alphabet
+  c.kind = reChar
+  for x in '\0'..'\255':
+    c.val = x
+    result.add c
+  c.kind = reBackref
+  for x in 1..backrefs:
+    c.val = char(x)
+    result.add c
+  for x in 1..captures:
+    c.val = char(x)
+    c.kind = reCapture
+    result.add c
+    c.kind = reCaptureEnd
+    result.add c
+  c.val = '\0'
+  c.kind = reBegin
+  result.add c
+  c.kind = reEnd
+  result.add c
+  c.kind = reWordBoundary
+  result.add c
+  c.kind = reWordBoundaryNot
+  result.add c
+
 proc NFA_to_DFA*(a: NFA; b: var DFA) =
   # Look into 'Modern compiler implementation in Java' for reference of
   # this algorithm.
@@ -196,7 +272,7 @@ proc NFA_to_DFA*(a: NFA; b: var DFA) =
   var p = 1
   var j = 0
   while j <= p:
-    for c in countup(0, alEpsilon-1):
+    for c in fullAlphabet(a.captures, a.backrefs):
       let e = getDFAedge(a, states[j], c)
       let i = searchInStates(states, p, e)
       if i >= 0:
@@ -220,13 +296,16 @@ proc NFA_to_DFA*(a: NFA; b: var DFA) =
       if minRule > b.ruleCount: b.ruleCount = minRule
   b.stateCount = j - 1
   b.startState = 1            # for some reason this is always 1
+  b.captures = a.captures
+  b.backrefs = a.backrefs
 
 proc getPreds(a: DFA; s: TLabelSet; c: Alphabet): TLabelSet =
   # computes the set of predecessors for the set s (under the character c)
   result = {}
   for i in countup(1, a.stateCount):
     for t in a.trans[i]:
-      if t.cond == c and t.dest in s: incl(result, i)
+      if t.cond.kind == c.kind and t.cond.val == c.val and t.dest in s:
+        incl(result, i)
 
 proc card(s: TLabelSet; maxState: int): int =
   result = 0
@@ -246,6 +325,8 @@ proc optimizeDFA*(a: DFA; b: var DFA) =
   # We use Hopcroft's algorithm; see the paper coming with this source.
   # We have different types of nodes: there is a one to one correspondence
   # between type and matching rule.
+  b.captures = a.captures
+  b.backrefs = a.backrefs
   var
     w, p: seq[TLabelSet] = @[]     # p[0], w[0] are unused
     wlen, plen, findRes: int
@@ -265,7 +346,7 @@ proc optimizeDFA*(a: DFA; b: var DFA) =
     dec(wlen)
     s = w[wLen]
     setlen(w, wLen)           # remove s from w;
-    for c in countup(0, alEpsilon-1):
+    for c in fullAlphabet(a.captures, a.backrefs):
       I = getPreds(a, s, c)
       if I == {}:
         continue              # speed things up
@@ -300,7 +381,7 @@ proc optimizeDFA*(a: DFA; b: var DFA) =
       repr = choose(p[j], a.stateCount) # choose a representant of the set
       if a.startState in p[j]: b.startState = j + 1
       b.toRules[j + 1] = a.toRules[repr]
-      for c in countup(0, alEpsilon-1):
+      for c in fullAlphabet(a.captures, a.backrefs):
         let dest = a.trans[repr].getDest(c)
         if dest != 0:
           # test to speed things up

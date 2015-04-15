@@ -86,66 +86,58 @@ proc genData(c: var Bytecode; data: set[char]): int =
   result = c.data.len
   c.data.add data
 
-proc genTest(res: var Bytecode; cs: set[Alphabet]; dest: int) =
-  var elem = -1
-  var card = 0
-  var cc: set[char] = {}
-  for x in 0..255:
-    if x in cs:
-      if elem == -1: elem = x
-      inc card
-      cc.incl char(x)
-  if card == 1:
-    gABx(res, opcTestChar, elem)
+proc genTest(res: var Bytecode; x: Alphabet; dest: int) =
+  case x.kind
+  of reChar:
+    gABx(res, opcTestChar, int(x.val))
     gABx(res, opcTJmp, dest)
-  elif card > 0:
-    gABx(res, opcTestSet, genData(res, cc))
-    gABx(res, opcTJmp, dest)
-  if alBegin in cs:
+  of reBegin:
     gABx(res, opcBegin, 0)
     gABx(res, opcTJmp, dest)
-  if alEnd in cs:
+  of reEnd:
     gABx(res, opcEnd, 0)
     gABx(res, opcTJmp, dest)
-  if alWordBoundary in cs:
+  of reWordBoundary:
     gABx(res, opcWordBound, genData(res, wordChars))
     gABx(res, opcTJmp, dest)
-  if alWordBoundaryNot in cs:
+  of reWordBoundaryNot:
     gABx(res, opcWordBound, genData(res, {'\1'..'\255'} - wordChars))
     gABx(res, opcTJmp, dest)
+  else: discard
 
-proc genCapture(res: var Bytecode; cs: set[Alphabet]; dest: int;
-                rule: var int) =
-  if alCaptureBegin in cs:
-    assert rule > 0
-    gABx(res, opcCaptureBegin, rule-1)
+proc genCapture(res: var Bytecode; cs: Alphabet; dest: int) =
+  case cs.kind
+  of reCapture:
+    gABx(res, opcCaptureBegin, cs.val.int-1)
     gABx(res, opcTJmp, dest)
     inc res.captures
-    rule = 0
-  elif alCaptureEnd in cs:
-    assert rule > 0
-    gABx(res, opcCaptureEnd, rule-1)
+  of reCaptureEnd:
+    gABx(res, opcCaptureEnd, cs.val.int-1)
     gABx(res, opcTJmp, dest)
-    rule = 0
-  elif alBackref in cs:
-    assert rule > 0
-    gABx(res, opcBackref, rule-1)
+  of reBackref:
+    gABx(res, opcBackref, cs.val.int-1)
     gABx(res, opcTJmp, dest)
-    rule = 0
+  else: discard
 
 proc genBytecode*(a: DFA; res: var Bytecode) =
   var stateToLabel = newSeq[int](a.stateCount)
 
   for src in countup(1, a.stateCount):
     stateToLabel[src-1] = res.code.len
-    var rule = getRule(a, src)
-    for dest in countup(1, a.stateCount):
-      let cs = getTransCC(a, src, dest)
-      genCapture(res, cs, dest, rule)
+    let rule = getRule(a, src)
+    for dest in allDests(a, src):
+      let (list, cset) = allTransitions(a, src, dest)
+      for x in list: genCapture(res, x, dest)
       # this implements the rather strange
       # "match longest but only sometimes" rule that regexes seem to have:
-      if rule == 0 or rule == getRule(a, dest): genTest(res, cs, dest)
-    gABx(res, opcRet, rule)
+      if rule == 0 or rule == getRule(a, dest):
+        if cset != {}:
+          gABx(res, opcTestSet, genData(res, cset))
+          gABx(res, opcTJmp, dest)
+        for x in list: genTest(res, x, dest)
+    if stateToLabel[src-1] != res.code.len or rule != 0:
+      # only generate 'ret' instruction when the state is not empty:
+      gABx(res, opcRet, rule)
   # Fixup the TJmp instructions:
   for i in 0 .. res.code.high:
     let instr = res.code[i]
@@ -157,7 +149,7 @@ type Action* = int #distinct range[1..32_000]
 
 proc backrefMatch(input: string; sp: int; capture: (int, int)): bool =
   var i = capture[0]
-  var k = 0
+  var k = sp
   while true:
     if i > capture[1]: return true
     if k >= input.len or input[k] != input[i]: return false
@@ -169,6 +161,7 @@ proc execBytecode*(m: Bytecode; input: string;
                    start=0): tuple[a: Action, endPos: int] =
   var pc = m.startAt
   var sp = start
+  #var backtrack: seq[(int,int)]
   while true:
     let instr = m.code[pc]
     let opc = instr.opcode
@@ -192,6 +185,11 @@ proc execBytecode*(m: Bytecode; input: string;
       else:
         inc pc, 2
     elif opc == opcRet:
+      #if arg == 0 and not backtrack.isNil and backtrack.len > 0:
+      #  let (newPc, newSp) = backtrack.pop()
+      #  pc = newPc
+      #  sp = newSp
+      #else:
       return (Action(arg), sp)
     else:
       case opc
@@ -211,8 +209,11 @@ proc execBytecode*(m: Bytecode; input: string;
         else:
           inc pc, 2
       of opcCaptureBegin:
-        setLen(captures, arg+1)
+        if captures.len <= arg: setLen(captures, arg+1)
         captures[arg][0] = sp
+        captures[arg][1] = -2 # mark as still open
+        #if backtrack.isNil: backtrack = @[]
+        #backtrack.add((pc+2, sp))
         pc = m.code[pc+1].regBx
       of opcCaptureEnd:
         captures[arg][1] = sp-1
@@ -229,7 +230,7 @@ proc findMacro(s: string): PRegExpr = nil
 
 proc re*(regex: string; flags: set[RegexFlag] = {reExtended}): Bytecode =
   let r = parseRegExpr(regex, findMacro, flags)
-  r.rule = 10
+  r.rule = 1
   var n: NFA
   regExprToNFA(r, n)
 

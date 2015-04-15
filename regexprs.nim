@@ -7,59 +7,34 @@
 #    distribution, for details about the copyright.
 #
 
-# This module implements a parser for regular expressions. It is special here
-# that whitespace is ignored in regular expressions for readability. The
-# colon serves as a terminator of the expression. Thus : has to be written as
-# \: if meant literally. Newlines are not allowed in regular expressions
-# though. It would made the interface between the different scanners (for each
-# programming language there should be a special one) too complicated.
-
-discard """
-expression   matches                        example
-----------   ----------------------------   -------
-c            any non-operator character c   a
-\c           character c literally          \*
-"s"          string s literally             "**"
-.            any character (incl newline)   a.*b
-[s]          any character in s             [abc]
-[^s]         any character not in s         [^abc]
-r*           zero or more r's               a*
-r+           one or more r's                a+
-r?           zero or one r                  a?
-r{m,n}       m to n occurrences of r        a{1,5}
-r{m}         m occurrences of r             a{5}
-r1r2         r1 then r2                     ab
-r1|r2        r1 or r2                       a|b
-(r)          r                              (a|b)
-
-The / and <> operators are not supported. The operators *, +, ? and {} have
-highest precedence, followed by concatenation. The | operator has lowest
-precedence. Parentheses () may be used to group expressions and overwrite
-default precedences.
-"""
+# This module implements a parser for regular expressions.
 
 import strutils
 
 type
-  Alphabet* = range[0..263] # usually a 'char', but \A, \Z, epsilon etc
-                            # are not in the range \0..\255
-  RegexKind* = enum
-    reEps,                    # epsilon node
-    reChar,                   # character node
-    reStr,                    # string node
-    reCClass,                 # character class node
-    reStar,                   # star node
-    rePlus,                   # plus node
-    reOpt,                    # option node
-    reCat,                    # concatenation node
-    reAlt,                    # alternatives node (|)
-    reCapture,                # (capture)
-    reBackref                 # \\backref
+  RegexKind* = enum         ## the regex AST's kind
+    reEps,                  ## epsilon node
+    reChar,                 ## character node
+    reStr,                  ## string node
+    reCClass,               ## character class node
+    reStar,                 ## star node
+    rePlus,                 ## plus node
+    reOpt,                  ## option node
+    reCat,                  ## concatenation node
+    reAlt,                  ## alternatives node (|)
+    reCapture,              ## (capture)
+    reCaptureEnd,           ## not used by regex, but by NFA
+    reBackref,              ## \\backref
+    reBegin,                ## \\A
+    reEnd,                  ## \\Z
+    reWordBoundary,         ## \\b
+    reWordBoundaryNot       ## \\B
+
   PRegExpr* = ref TRegExpr
   TRegExpr* = object
     kind*: RegexKind
     a*, b*: PRegExpr          # some nodes have two successors
-    c*: Alphabet
+    c*: char
     s*: string
     cc*: ref set[char]
     rule*: int                # if >= 0 it is a final state;
@@ -83,16 +58,6 @@ type
     findMacro: MacroLookupProc
 
 const
-  alBegin* = Alphabet(256)   # \A
-  alEnd* = Alphabet(257)     # \Z
-  alWordBoundary* = Alphabet(258) # \b
-  alWordBoundaryNot* = Alphabet(259) # \B
-  alCaptureBegin* = Alphabet(260)
-  alCaptureEnd* = Alphabet(261)
-  alBackRef* = Alphabet(262)
-  alEpsilon* = Alphabet(263) # epsilon (not used by regex, but by NFA)
-
-const
   wordChars* = {'A'..'Z', 'a'..'z', '0'..'9', '_', '\128', '\255'}
   whitespace* = {'\1'..'\32'}
   digits* = {'0'..'9'}
@@ -106,16 +71,11 @@ proc epsExpr*(): PRegExpr =
 
 proc charExpr*(c: char): PRegExpr =
   result = newExpr(reChar)
-  result.c = Alphabet(c)
-
-proc charExpr*(c: Alphabet): PRegExpr =
-  result = newExpr(reChar)
   result.c = c
 
 proc backrefExpr*(x: int): PRegExpr =
   result = newExpr(reBackref)
-  #result.c = Alphabet(x)
-  result.rule = x
+  result.c = char x
 
 proc strExpr*(str: string): PRegExpr =
   if len(str) == 1:
@@ -211,16 +171,16 @@ proc getChar(buf: string; c: var ReCtx; inClass: bool): PRegExpr =
       result = charExpr('\t')
       inc(c.pos, 2)
     of 'b':
-      result = if inClass: charExpr('\b') else: charExpr(alWordBoundary)
+      result = if inClass: charExpr('\b') else: newExpr(reWordBoundary)
       inc(c.pos, 2)
     of 'B':
-      result = if inClass: charExpr('\b') else: charExpr(alWordBoundaryNot)
+      result = if inClass: charExpr('\b') else: newExpr(reWordBoundaryNot)
       inc(c.pos, 2)
     of 'e':
       result = charExpr('\e')
       inc(c.pos, 2)
     of 'a', 'A':
-      result = if inClass: charExpr('\a') else: charExpr(alBegin)
+      result = if inClass: charExpr('\a') else: newExpr(reBegin)
       inc(c.pos, 2)
     of 'v':
       result = charExpr('\v')
@@ -229,7 +189,7 @@ proc getChar(buf: string; c: var ReCtx; inClass: bool): PRegExpr =
       result = charExpr('\f')
       inc(c.pos, 2)
     of 'z', 'Z':
-      if not inClass: result = charExpr(alEnd)
+      if not inClass: result = newExpr(reEnd)
       else: error("\\Z not supported in character class")
       inc(c.pos, 2)
     of 's':
@@ -277,7 +237,7 @@ proc parseStr(buf: string; c: var ReCtx): PRegExpr =
     if buf[c.pos] in {'\0', '\C', '\L'}:
       error "\" expected"
     let al = getChar(buf, c,false)
-    if al.kind == reChar and al.c <= 255: s.add char(al.c)
+    if al.kind == reChar: s.add al.c
     else: error "invalid regular expression " & buf
   inc(c.pos)                    # skip "
   result = strExpr(s)
@@ -297,16 +257,16 @@ proc parseCClass(buf: string; c: var ReCtx): PRegExpr =
     if buf[c.pos] in {'\0', '\C', '\L'}:
       error "] expected"
     let a = getChar(buf, c, true)
-    if a.kind == reChar and a.c <= 255:
-      incl(cc, a.c.char)
+    if a.kind == reChar:
+      incl(cc, a.c)
       if buf[c.pos] == '-':
         inc(c.pos)
         if buf[c.pos] == ']':
           incl(cc, '-')
           break
         let b = getChar(buf, c, true)
-        if b.kind == reChar and b.c <= 255:
-          cc = cc + {a.c.char .. b.c.char}
+        if b.kind == reChar:
+          cc = cc + {a.c .. b.c}
         elif b.kind == reCClass:
           incl(cc, '-')
           cc = cc + b.cc[]
@@ -374,7 +334,7 @@ proc factor(buf: string; c: var ReCtx): PRegExpr =
     if isCapture:
       inc c.captures
       result = newCapture(result)
-      result.rule = c.captures
+      result.c = char c.captures
   of '\\':
     result = getChar(buf, c, false)
   of '{':
@@ -386,10 +346,10 @@ proc factor(buf: string; c: var ReCtx): PRegExpr =
   of '*', '+', '?':
     error "escape " & buf[c.pos] & " with \\"
   of '$':
-    result = charExpr(alEnd)
+    result = newExpr(reEnd)
     inc(c.pos)
   of '^':
-    result = charExpr(alBegin)
+    result = newExpr(reBegin)
     inc(c.pos)
   else:
     result = charExpr(buf[c.pos])
