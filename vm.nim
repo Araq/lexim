@@ -56,8 +56,10 @@ proc codeListing(c: Bytecode, result: var string, start=0; last = -1) =
       result.addf("\t$#\t$#\n", ($opc).substr(3), $c.data[x.regBx])
     of opcTestChar:
       result.addf("\t$#\t$#\n", ($opc).substr(3), $chr(x.regBx))
-    of opcTJmp, opcCaptureBegin, opcCaptureEnd, opcBackref:
+    of opcTJmp:
       result.addf("\t$#\tL$#\n", ($opc).substr(3), x.regBx)
+    of opcCaptureBegin, opcCaptureEnd, opcBackref:
+      result.addf("\t$#\tC$#\n", ($opc).substr(3), x.regBx)
     of opcBegin, opcEnd, opcWordBound:
       result.addf("\t$#\n", ($opc).substr(3))
     inc i
@@ -229,7 +231,7 @@ proc re*(regex: string; flags: set[RegexFlag] = {reExtended}): Bytecode =
   let r = parseRegExpr(regex, findMacro, flags)
   r.rule = 10
   var n: NFA
-  regExprToNFA(r, n, {supportCapture})
+  regExprToNFA(r, n)
 
   var d, o: DFA
   NFA_to_DFA(n, d)
