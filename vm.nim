@@ -126,11 +126,11 @@ proc genBytecode*(a: DFA; res: var Bytecode) =
     stateToLabel[src-1] = res.code.len
     let rule = getRule(a, src)
     for dest in allDests(a, src):
-      let (list, cset) = allTransitions(a, src, dest)
-      for x in list: genCapture(res, x, dest)
       # this implements the rather strange
       # "match longest but only sometimes" rule that regexes seem to have:
       if rule == 0 or rule == getRule(a, dest):
+        let (list, cset) = allTransitions(a, src, dest)
+        for x in list: genCapture(res, x, dest)
         if cset != {}:
           gABx(res, opcTestSet, genData(res, cset))
           gABx(res, opcTJmp, dest)
@@ -233,10 +233,11 @@ proc re*(regex: string; flags: set[RegexFlag] = {reExtended}): Bytecode =
   r.rule = 1
   var n: NFA
   regExprToNFA(r, n)
+  let alph = fullAlphabet(n)
 
   var d, o: DFA
-  NFA_to_DFA(n, d)
-  optimizeDFA(d, o)
+  NFA_to_DFA(n, d, alph)
+  optimizeDFA(d, o, alph)
 
   result.code = @[]
   result.data = @[]

@@ -17,17 +17,9 @@ type
   Alphabet* = object
     kind*: RegexKind
     val*: char
-  # distinct int # char or special
 
 const
-  alEpsilon* = Alphabet(kind: reEps, val: '\0')  #  Alphabet(-1)
-  #alBegin* = Alphabet(kind: reBegin, val: '\0') #  Alphabet(256)   # \A
-  #alEnd* = Alphabet(kind: reEnd, val: '\0') # Alphabet(257)     # \Z
-  #alWordBoundary* = Alphabet(kind: reWordBoundary, val: '\0') # Alphabet(258) # \b
-  #alWordBoundaryNot* = Alphabet(259) # \B
-  #alCaptureBegin* = Alphabet(260)
-  #alCaptureEnd* = Alphabet(261)
-  #alBackRef* = Alphabet(262)
+  alEpsilon* = Alphabet(kind: reEps, val: '\0')
 
 type
   TRuleIndex* = range[0..10_000]
@@ -162,18 +154,6 @@ proc regExprToNFA*(r: PRegExpr; a: var NFA) =
   initNFA(a)
   discard auxRegExprToNFA(r, a, 0)
 
-when false:
-  proc getTransCC*(a: DFA; source, dest: TLabel): set[char] =
-    result = {}
-    if not a.trans[source].isNil:
-      for x in a.trans[source]:
-        if x.dest == dest and x.cond.kind == reChar: result.incl x.cond.val
-
-  iterator getTransConds*(a: DFA; source, dest: TLabel): Alphabet =
-    if not a.trans[source].isNil:
-      for x in a.trans[source]:
-        if x.dest == dest: yield x.cond
-
 proc allTransitions*(a: DFA; source, dest: TLabel): (seq[Alphabet], set[char]) =
   result[0] = @[]
   if not a.trans[source].isNil:
@@ -262,7 +242,9 @@ proc fullAlphabet(captures, backrefs: int): seq[Alphabet] =
   c.kind = reWordBoundaryNot
   result.add c
 
-proc NFA_to_DFA*(a: NFA; b: var DFA) =
+proc fullAlphabet*(a: NFA): seq[Alphabet] = fullAlphabet(a.captures, a.backrefs)
+
+proc NFA_to_DFA*(a: NFA; b: var DFA; fullAlphabet: seq[Alphabet]) =
   # Look into 'Modern compiler implementation in Java' for reference of
   # this algorithm.
   var
@@ -272,7 +254,7 @@ proc NFA_to_DFA*(a: NFA; b: var DFA) =
   var p = 1
   var j = 0
   while j <= p:
-    for c in fullAlphabet(a.captures, a.backrefs):
+    for c in fullAlphabet:
       let e = getDFAedge(a, states[j], c)
       let i = searchInStates(states, p, e)
       if i >= 0:
@@ -320,7 +302,7 @@ proc choose(s: TLabelSet; maxState: int): TLabel =
       return i
   result = 0                  # invalid state
 
-proc optimizeDFA*(a: DFA; b: var DFA) =
+proc optimizeDFA*(a: DFA; b: var DFA; fullAlphabet: seq[Alphabet]) =
   # Optimizes the DFA a to produce a minimal DFA.
   # We use Hopcroft's algorithm; see the paper coming with this source.
   # We have different types of nodes: there is a one to one correspondence
@@ -346,7 +328,7 @@ proc optimizeDFA*(a: DFA; b: var DFA) =
     dec(wlen)
     s = w[wLen]
     setlen(w, wLen)           # remove s from w;
-    for c in fullAlphabet(a.captures, a.backrefs):
+    for c in fullAlphabet:
       I = getPreds(a, s, c)
       if I == {}:
         continue              # speed things up
@@ -381,7 +363,7 @@ proc optimizeDFA*(a: DFA; b: var DFA) =
       repr = choose(p[j], a.stateCount) # choose a representant of the set
       if a.startState in p[j]: b.startState = j + 1
       b.toRules[j + 1] = a.toRules[repr]
-      for c in fullAlphabet(a.captures, a.backrefs):
+      for c in fullAlphabet:
         let dest = a.trans[repr].getDest(c)
         if dest != 0:
           # test to speed things up

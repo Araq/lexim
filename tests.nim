@@ -27,10 +27,10 @@ doAssert(matchLen("def foo", re"\b(?:abc|def)\b") == 3)
 
 doAssert(matchLen("def foo\C\L", re"\bdef\sfoo\n") == 9)
 
-let complex = re"(\w+)" # |(a)bcxyz"
+let complex = re"(\`|\')[^`']*\1" #re"(\w+)|(a)bcxyz"
 
 echoCode(complex)
-if "abcc" =~ complex:
+if "'haha'" =~ complex:
   echo matches
 else:
   assert false

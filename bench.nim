@@ -1,5 +1,5 @@
 
-import nfa, regexprs, listing, codegen
+import nfa, regexprs, listing
 from strutils import find
 
 const
@@ -26,7 +26,7 @@ proc main =
   when true:
     bench "vm 1":
       for i in 1..100:
-        discard vm.execBytecode(bc, inp)
+        discard vm.matchLen(inp, bc)
 
     bench "re A":
       for i in 1..100:
@@ -36,7 +36,7 @@ proc main =
       for i in 1..100:
         discard find(inp, "pleasuring")
 
-    echo execBytecode(bc, inp)
+    echo matchLen(inp, bc)
     echo re.find(inp, thaRe)+len"pleasuring"
     echo find(inp, "pleasuring")+len"pleasuring"
 
