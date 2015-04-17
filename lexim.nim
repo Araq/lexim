@@ -131,6 +131,9 @@ proc parseCodeGen(p: var TParser) =
       p.vars[varc] = value
   if not found: error(p, "unknown variable name: " & varname)
 
+template parseRe(): expr =
+  parseRegExpr(p.line.substr(p.pos), findMacro, {reNoCaptures, reNoBackrefs})
+
 proc parseMacro(p: var TParser) =
   let varname = getWord(p.line, p.pos)
   rawSkipWhites(p)
@@ -138,7 +141,7 @@ proc parseMacro(p: var TParser) =
   else: error(p, "= expected")
   rawSkipWhites(p)
   try:
-    let value = regexprs.parseRegExpr(p.line, p.pos, findMacro)
+    let value = parseRe()
     addMacro(varname, value)
   except RegexError:
     error(p, getCurrentExceptionMsg())
@@ -148,9 +151,9 @@ proc parseMacro(p: var TParser) =
 proc parseRule(p: var TParser) =
   try:
     let indentation = p.currIndent
-    let regexpr = parseRegExpr(p.line, p.pos, findMacro)
+    let regexpr = parseRe()
     rawSkipWhites(p)
-    if regexpr == nil or regexpr.regType == reEps:
+    if regexpr == nil or regexpr.kind == reEps:
       readline(p)             # just skip empty lines
       return
     if p.line[p.pos] == ':': inc(p.pos)
@@ -160,8 +163,7 @@ proc parseRule(p: var TParser) =
     while true:
       readline(p)
       skipWhites(p)
-      if p.currIndent <= indentation or
-          matchesDirective(p.line, "END", p.pos):
+      if p.currIndent <= indentation or matchesDirective(p.line, "END", p.pos):
         break
       a.add "\n"
       a.add(p.line)
@@ -178,18 +180,19 @@ proc generateCodeAux(p: var TParser; d: DFA) =
   genMatcher(d, p.vars, p.rules, buffer)
   write(p.outp, buffer)
 
-
-var n: NFA
-var d, o: DFA
-
 proc generateCode(p: var TParser) =
   var bigRe: PRegExpr
   if len(p.rules) == 0: return
   bigRe = p.rules[0].match
   for i in countup(1, high(p.rules)): bigRe = altExpr(bigRe, p.rules[i].match)
+
+  var n: NFA
+  var d, o: DFA
+
   regExprToNFA(bigRe, n)
-  NFA_to_DFA(n, d)
-  optimizeDFA(d, o)
+  let alph = fullAlphabet(n)
+  NFA_to_DFA(n, d, alph)
+  optimizeDFA(d, o, alph)
   generateCodeAux(p, o)
 
 proc parse(p: var TParser; infile, outfile: string) =

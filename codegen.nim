@@ -24,8 +24,7 @@ const
   VarToName*: VarArray = ["", "CURRCHAR", "NEXTCHAR",
     "BEFOREBREAK", "FILLBUFFER"]
 
-proc charLit(c: Alphabet): string =
-  let c = char(c)
+proc charLit(c: char): string =
   case c
   of '\b': result = "'\\b'"
   of '\t': result = "'\\t'"
@@ -42,36 +41,32 @@ proc charLit(c: Alphabet): string =
     else:
       result = "'" & $c & "'"
 
-proc charSetLit(cc: set[Alphabet]; lastChar: var int): string =
+proc charSetLit(cc: set[char]): string =
   const
-    MaxChar = 0xFF
+    MaxChar = '\xFF'
   result = "{"
-  var c1 = 0
+  var c1 = '\0'
   while true:
     if c1 in cc:
       var c2 = c1
       while c2 < MaxChar and succ(c2) in cc: c2 = succ(c2)
       if result.len > 1: result.add ", "
       if c1 == c2:
-        if lastChar == 0: lastChar = c1.ord
-        else: lastChar = -1
         result.add charLit(c1)
       elif c2 == succ(c1):
-        lastChar = -1
         result.add charLit(c1) & ", " & charLit(c2)
       else:
-        lastChar = -1
         result.add charLit(c1) & ".." & charLit(c2)
       c1 = c2
     if c1 >= MaxChar: break
     inc c1
   result.add "}"
 
-proc getCmp(vars: VarArray; x: set[Alphabet]): string =
-  var lastChar = 0
-  result = vars[vaCurrChar] & " in " & charSetLit(x, lastChar)
-  if lastChar > 0:
-    result = vars[vaCurrChar] & " == " & charLit(lastChar)
+proc getCmp(vars: VarArray; x: set[char]): string =
+  result = vars[vaCurrChar] & " in " & charSetLit(x)
+
+proc getSpecial(vars: VarArray; x: Alphabet): string =
+  result = vars[vaCurrChar] & " == " & charLit(x.val)
 
 proc `&=`(x: var string; args: openArray[string]) =
   for a in args: x.add a
@@ -90,12 +85,19 @@ proc genMatcher*(a: DFA; vars: VarArray; rules: openArray[TRule];
     pat "    of ", src, ":\n"
     let rule = getRule(a, src)
     var ifs = 0
-    for dest in countup(1, a.stateCount):
-      let cs = getTransCC(a, src, dest)
+    for dest in allDests(a, src):
+      let (others, cs) = allTransitions(a, src, dest)
       if cs != {}:
         inc ifs
         pat((if ifs == 1: "      if " else: "      elif "),
           getCmp(vars, cs), ": ", vars[vaNextChar],"; state = ", dest, "\n")
+      for ot in others:
+        if ot.kind == reChar:
+          inc ifs
+          pat((if ifs == 1: "      if " else: "      elif "),
+            getSpecial(vars, ot), ": ", vars[vaNextChar],"; state = ", dest, "\n")
+        else:
+          doAssert false, "not supported " & $ot.kind
     if ifs > 0:
       pat "      else:\n"
     else:
