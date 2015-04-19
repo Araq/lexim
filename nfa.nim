@@ -261,8 +261,8 @@ proc NFA_to_DFA*(a: NFA; b: var DFA; fullAlphabet: seq[Alphabet]) =
         addTrans(b.trans[j], c, i)
       else:
         inc(p)
-        if p >= states.len: setLen(states, p+1)
-        states[p] = e
+        assert p == states.len
+        states.add e
         addTrans(b.trans[j], c, p)
     inc(j)
   for d in countup(low(TLabel), j - 1):
@@ -309,65 +309,50 @@ proc optimizeDFA*(a: DFA; b: var DFA; fullAlphabet: seq[Alphabet]) =
   # between type and matching rule.
   b.captures = a.captures
   b.backrefs = a.backrefs
-  var
-    w, p: seq[TLabelSet] = @[]     # p[0], w[0] are unused
-    wlen, plen, findRes: int
-    s, I, R: TLabelSet
-    x, y: TLabelSet
-    repr: TLabel              # representant of a label set
+  # p[0], w[0] are unused
   # assign each state to a partition and to the worklist:
   # w := {F, S-F}; p := {F, S-F}
-  setlen(w, a.ruleCount + 1)
-  setlen(p, a.ruleCount + 1)
+  var w = newSeq[TLabelSet](a.ruleCount+1)
+  var p = newSeq[TLabelSet](a.ruleCount+1)
   for d in countup(1, a.stateCount):
     incl(w[a.toRules[d]], d)
     incl(p[a.toRules[d]], d)
-  wlen = a.ruleCount + 1
-  plen = a.ruleCount + 1
-  while wlen > 0:
-    dec(wlen)
-    s = w[wLen]
-    setlen(w, wLen)           # remove s from w;
+  while w.len > 0:
+    let s = w.pop
     for c in fullAlphabet:
-      I = getPreds(a, s, c)
+      let I = getPreds(a, s, c)
       if I == {}:
         continue              # speed things up
-      for j in countdown(plen - 1, 0):
-        R = p[j]
+      for j in countdown(p.len - 1, 0):
+        let R = p[j]
         if (R * I != {}) and not (R <= I):
           # partition R into x, y
-          x = R * I
-          y = R - x           # replace R by x and y in P:
-          inc(plen)
-          setlen(p, plen)
+          let x = R * I
+          let y = R - x           # replace R by x and y in P:
           p[j] = x
-          p[plen - 1] = y
-          findRes = searchInStates(w, wlen - 1, R)
+          p.add y
+          let findRes = searchInStates(w, w.len - 1, R)
           if findRes >= 0:
             # R is elem of W, so replace R by x, y
             w[findRes] = x
-            inc(wlen)
-            setlen(w, wlen)
-            w[wlen - 1] = y
+            w.add y
           else:
-            inc(wlen)
-            setlen(w, wlen)
-            if (card(x, a.stateCount) <= card(y, a.stateCount)): # add y to W:
-              w[wlen - 1] = x
+            if card(x, a.stateCount) <= card(y, a.stateCount): # add y to W:
+              w.add x
             else:
-              w[wlen - 1] = y
-  b.stateCount = plen         # new states
+              w.add y
+  b.stateCount = p.len        # new states
   b.ruleCount = a.ruleCount   # rule count stays the same
-  for j in countup(0, plen - 1):
+  for j in countup(0, p.len - 1):
     if p[j] != {}:
-      repr = choose(p[j], a.stateCount) # choose a representant of the set
+      let repr = choose(p[j], a.stateCount) # choose a representant of the set
       if a.startState in p[j]: b.startState = j + 1
       b.toRules[j + 1] = a.toRules[repr]
       for c in fullAlphabet:
         let dest = a.trans[repr].getDest(c)
         if dest != 0:
           # test to speed things up
-          for k in countup(0, plen - 1):
+          for k in countup(0, p.len - 1):
             if dest in p[k]:
               addTrans b.trans[j + 1], c, k + 1
               break

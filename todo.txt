@@ -1,3 +1,2 @@
 * support \A \Z \b properly
-* Try to make it run in Nim's VM
 * Testing, testing, testing.

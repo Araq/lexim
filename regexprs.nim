@@ -414,3 +414,15 @@ proc parseRegExpr*(reg: string; findMacro: MacroLookupProc;
   c.findMacro = findMacro
   c.captures = 0
   result = parseRegExpr(reg, c)
+
+proc containsInvCap(r: PRegExpr; inAlt: bool): bool =
+  if r != nil:
+    result = containsInvCap(r.a, inAlt or r.kind == reAlt) or
+             containsInvCap(r.b, inAlt or r.kind == reAlt) or
+             r.kind == reCapture and inAlt
+
+proc containsInvalidCapture*(r: PRegExpr): bool =
+  ## When the implementation uses a DFA, captures can only be supported in
+  ## quite a limited way: (abc)|(xyz) cannot be supported. This proc checks for
+  ## that so a nice error can be generated.
+  result = containsInvCap(r, false)
