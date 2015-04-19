@@ -49,7 +49,7 @@ type
     toRules*: TLabelToRule
 
   NFA* = object
-    captures, backrefs: int
+    captures, backrefs, stateCount: int
     trans*: NFA_Trans
     toRules*: TLabelToRule
 
@@ -152,7 +152,7 @@ proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
 
 proc regExprToNFA*(r: PRegExpr; a: var NFA) =
   initNFA(a)
-  discard auxRegExprToNFA(r, a, 0)
+  a.stateCount = auxRegExprToNFA(r, a, 0)
 
 proc allTransitions*(a: DFA; source, dest: TLabel): (seq[Alphabet], set[char]) =
   result[0] = @[]
@@ -186,7 +186,7 @@ proc closure(a: NFA; S: TLabelSet): TLabelSet =
   result = S
   while true:
     res = result
-    for L in countup(0, maxLabel):
+    for L in countup(0, a.stateCount):
       if L in res:
         if not a.trans[L].isNil and a.trans[L][0].cond.kind == reEps:
           result = result + a.trans[L][0].dest
@@ -204,7 +204,7 @@ proc getDest(a: seq[DFA_Edge]; c: Alphabet): TLabel =
 
 proc getDFAedge(a: NFA; d: TLabelSet; c: Alphabet): TLabelSet =
   var tmp: TLabelSet = {}
-  for L in countup(0, maxLabel):
+  for L in countup(0, a.stateCount):
     if L in d:
       tmp = tmp + getDest(a.trans[L], c)
   result = closure(a, tmp)
