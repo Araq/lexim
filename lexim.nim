@@ -12,6 +12,9 @@ import
 
 proc findMacro(name: string): PRegExpr = nil
 
+proc newRange(a, b: NimNode): NimNode {.compileTime.} =
+  newCall(bindSym"..", a, b)
+
 proc charSetLit(cc: set[char]): NimNode {.compileTime.} =
   const
     MaxChar = '\xFF'
@@ -27,7 +30,7 @@ proc charSetLit(cc: set[char]): NimNode {.compileTime.} =
         result.add newLit(c1)
         result.add newLit(c2)
       else:
-        result.add newTree(nnkRange, newLit(c1), newLit(c2))
+        result.add newRange(newLit(c1), newLit(c2))
       c1 = c2
     if c1 >= MaxChar: break
     inc c1
@@ -50,14 +53,14 @@ proc nextState(i, state: NimNode; dest: int): NimNode {.compileTime.} =
 proc genMatcher(a: DFA; s, i, bodies: NimNode): NimNode {.compileTime.} =
   let state = genSym(nskVar, "state")
   result = newStmtList()
-  result.add newVarStmt(newTree(nnkPragmaExpr, state, newLit"goto"),
+  result.add newVarStmt(newTree(nnkPragmaExpr, state,
+                          newTree(nnkPragma, ident"goto")),
                         newTree(nnkBracketExpr, bindSym"range",
-                          newTree(nnkRange, newLit(1), newLit(a.startState))),
+                          newRange(newLit(1), newLit(a.stateCount))),
                         newLit(a.startState))
   var caseStmt = newNimNode(nnkCaseStmt)
   caseStmt.add state
   result.add newTree(nnkWhileStmt, bindSym"true", caseStmt)
-
   for src in countup(1, a.stateCount):
     let rule = getRule(a, src)
     var ifStmt = newNimNode(nnkIfStmt)
@@ -74,13 +77,16 @@ proc genMatcher(a: DFA; s, i, bodies: NimNode): NimNode {.compileTime.} =
                              nextState(i, state, dest))
         else:
           doAssert false, "not supported " & $ot.kind
-    if rule >= 1:
-      let actions = newStmtList(bodies[rule-1][1], newNimNode(nnkBreakStmt))
-      if ifStmt.len == 0:
-        caseStmt.add newTree(nnkOfBranch, newLit(src), actions)
-      else:
-        ifStmt.add newTree(nnkElse, actions)
-        caseStmt.add newTree(nnkOfBranch, newLit(src), ifStmt)
+    let actions = if rule >= 1:
+           newStmtList(bodies[rule-1][1], newTree(nnkBreakStmt,
+                  newNimNode(nnkEmpty)))
+         else:
+           newTree(nnkBreakStmt, newNimNode(nnkEmpty))
+    if ifStmt.len == 0:
+      caseStmt.add newTree(nnkOfBranch, newLit(src), actions)
+    else:
+      ifStmt.add newTree(nnkElse, actions)
+      caseStmt.add newTree(nnkOfBranch, newLit(src), ifStmt)
 
 macro match*(s: cstring|string; pos: int; sections: untyped): untyped =
   var bigRe: PRegExpr = nil
@@ -109,9 +115,13 @@ macro match*(s: cstring|string; pos: int; sections: untyped): untyped =
   echo repr result
 
 when isMainModule: # defined(testing):
-  var input = "the input"
+  var input = "the 0909 else input elif elseo"
   var pos = 0
-  match input, pos:
-  of r"[a-zA-Z_]\w+": echo "an identifier"
-  of r"\d+": echo "an integer"
-  of r".": echo "something else"
+  while pos < input.len:
+    let oldPos = pos
+    match input, pos:
+    of r"\d+": echo "an integer ", input.substr(oldPos, pos-1), "##"
+    of "else": echo "an ELSE"
+    of "elif": echo "an ELIF"
+    of r"[a-zA-Z_]\w+": echo "an identifier ", input.substr(oldPos, pos-1), "##"
+    of r".": echo "something else ", input.substr(oldPos, pos-1), "##"
