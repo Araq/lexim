@@ -1,2 +1,2 @@
-* support \A \Z \b properly
-* Testing, testing, testing.
+* fail at re construction time when invalid captures are used
+* finish 're' compatibility API
