@@ -8,7 +8,7 @@
 #
 
 import
-  strutils, regexprs, listing
+  strutils, regexprs
 
 const
   maxLabel* = 255
@@ -284,9 +284,11 @@ proc NFA_to_DFA*(a: NFA; b: var DFA; fullAlphabet: seq[Alphabet]) =
 proc getPreds(a: DFA; s: TLabelSet; c: Alphabet): TLabelSet =
   # computes the set of predecessors for the set s (under the character c)
   result = {}
+  let k = c.kind
+  let v = c.val
   for i in countup(1, a.stateCount):
     for t in a.trans[i]:
-      if t.cond.kind == c.kind and t.cond.val == c.val and t.dest in s:
+      if t.cond.kind == k and t.cond.val == v and t.dest in s:
         incl(result, i)
 
 proc card(s: TLabelSet; maxState: int): int =

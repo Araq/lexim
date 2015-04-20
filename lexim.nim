@@ -112,7 +112,7 @@ macro match*(s: cstring|string; pos: int; sections: untyped): untyped =
   NFA_to_DFA(n, d, alph)
   optimizeDFA(d, o, alph)
   result = genMatcher(o, s, pos, sections)
-  echo repr result
+  #echo repr result
 
 when isMainModule: # defined(testing):
   var input = "the 0909 else input elif elseo"
