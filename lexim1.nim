@@ -8,7 +8,9 @@
 #
 
 import
-  regexprs, nfa, macros, marshal
+  regexprs, nfa, macros
+
+proc findMacro(name: string): PRegExpr = nil
 
 proc newRange(a, b: NimNode): NimNode {.compileTime.} =
   newCall(bindSym"..", a, b)
@@ -87,22 +89,33 @@ proc genMatcher(a: DFA; s, i, bodies: NimNode): NimNode {.compileTime.} =
       caseStmt.add newTree(nnkOfBranch, newLit(src), ifStmt)
 
 macro match*(s: cstring|string; pos: int; sections: untyped): untyped =
-  var res: seq[string] = @[]
+  var bigRe: PRegExpr = nil
+  var rule = 1
   for sec in sections.children:
     expectKind sec, nnkOfBranch
     expectLen sec, 2
     if sec[0].kind in nnkStrLit..nnkTripleStrLit:
-      res.add sec[0].strVal
+      let rex = parseRegExpr(sec[0].strVal, findMacro,
+                             {reNoCaptures, reNoBackrefs})
+      rex.rule = rule
+      if bigRe.isNil: bigRe = rex
+      else: bigRe = altExpr(bigRe, rex)
     else:
       error("Expected a node of kind nnkStrLit, got " & $sec[0].kind)
+    inc rule
 
-  writeFile("lexe.input", $$res)
-  let o = to[DFA](staticExec("lexe"))
+  var n: NFA
+  var d, o: DFA
+
+  regExprToNFA(bigRe, n)
+  let alph = fullAlphabet(n)
+  NFA_to_DFA(n, d, alph)
+  optimizeDFA(d, o, alph)
   result = genMatcher(o, s, pos, sections)
   #echo repr result
 
 when isMainModule: # defined(testing):
-  var input = "the 0909 else input elif elseo end"
+  var input = "the 0909 else input elif elseo"
   var pos = 0
   while pos < input.len:
     let oldPos = pos
@@ -110,6 +123,5 @@ when isMainModule: # defined(testing):
     of r"\d+": echo "an integer ", input.substr(oldPos, pos-1), "##"
     of "else": echo "an ELSE"
     of "elif": echo "an ELIF"
-    of "end": echo "an END"
     of r"[a-zA-Z_]\w+": echo "an identifier ", input.substr(oldPos, pos-1), "##"
     of r".": echo "something else ", input.substr(oldPos, pos-1), "##"

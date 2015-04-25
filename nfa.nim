@@ -43,7 +43,7 @@ type
   DFA* = object
     startState*: int          # start state; for some reason it won't always be 1
     stateCount*: int          # number of states; states are from 1 to stateCount
-    captures, backrefs: int
+    captures*, backrefs*: int
     ruleCount*: int           # number of rules; rule 0 means no match
     trans*: DFA_Trans
     toRules*: TLabelToRule
