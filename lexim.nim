@@ -86,6 +86,9 @@ proc genMatcher(a: DFA; s, i, bodies: NimNode): NimNode {.compileTime.} =
       ifStmt.add newTree(nnkElse, actions)
       caseStmt.add newTree(nnkOfBranch, newLit(src), ifStmt)
 
+template `/.`(x: string): string =
+  (when defined(posix): "./" & x else: x)
+
 macro match*(s: cstring|string; pos: int; sections: untyped): untyped =
   var res: seq[string] = @[]
   for sec in sections.children:
@@ -97,7 +100,7 @@ macro match*(s: cstring|string; pos: int; sections: untyped): untyped =
       error("Expected a node of kind nnkStrLit, got " & $sec[0].kind)
 
   writeFile("lexe.input", $$res)
-  let o = to[DFA](staticExec("lexe"))
+  let o = to[DFA](staticExec(/."lexe"))
   result = genMatcher(o, s, pos, sections)
   #echo repr result
 

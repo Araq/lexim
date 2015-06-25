@@ -39,7 +39,6 @@ type
     cc*: ref set[char]
     rule*: int                # if >= 0 it is a final state;
                               # then it is the rule that was matched
-                              # also misused for captures and backrefs!
 
   RegexError* = object of ValueError
   RegexFlag* = enum  ## how regexes are parsed
