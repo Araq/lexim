@@ -1,3 +1,19 @@
+discard """
+  output: '''
+an identifier the##
+something else  ##
+an integer 0909##
+something else  ##
+an ELSE
+something else  ##
+an identifier input##
+something else  ##
+an ELIF
+something else  ##
+an identifier elseo##
+something else  ##
+an END'''
+"""
 
 import lexim
 
