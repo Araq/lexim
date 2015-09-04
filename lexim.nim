@@ -99,8 +99,9 @@ macro match*(s: cstring|string; pos: int; sections: untyped): untyped =
     else:
       error("Expected a node of kind nnkStrLit, got " & $sec[0].kind)
 
-  writeFile("lexe.input", $$res)
-  let o = to[DFA](staticExec(/."lexe"))
+  let data = $$res
+  writeFile("lexe.input", data)
+  let o = to[DFA](staticExec(/."lexe", input="", cache=data))
   result = genMatcher(o, s, pos, sections)
   #echo repr result
 

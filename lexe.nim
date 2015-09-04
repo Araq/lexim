@@ -8,16 +8,13 @@
 #
 
 import
-  regexprs, nfa, marshal, cache
+  regexprs, nfa, marshal
 
 # The part that implements lexer generation as an exe to speed up
 # this process.
 proc findMacro(name: string): PRegExpr = nil
 
 proc main(input: string): string =
-  result = cache.get(input)
-  if result.len != 0: return result
-
   let inp = marshal.to[seq[string]](input)
 
   var bigRe: PRegExpr = nil
@@ -36,6 +33,5 @@ proc main(input: string): string =
   NFA_to_DFA(n, d, alph)
   optimizeDFA(d, o, alph)
   result = $$o
-  cache.put(input, result)
 
 echo main(readFile("lexe.input"))
