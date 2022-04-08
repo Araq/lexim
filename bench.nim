@@ -11,15 +11,14 @@ from times import cpuTime
 var bc = vm.re(asRegex)
 echo "code ", bc.code.len, " data: ", bc.data.len
 
-template bench(text, doWork: expr) =
+template bench(text, doWork: untyped) =
   var t0 = cpuTime()
   doWork
   echo text, " took [s] ", cpuTime() - t0
 
 import re, strutils
 
-# for me it's faster without 'reStudy':
-let thaRe = re.re("[Pp]leas.*?uring", {reDotAll})
+let thaRe = re.re("[Pp]leas.*?uring", {reDotAll, reStudy})
 
 proc main =
   let inp = readFile("benchdata.txt")
