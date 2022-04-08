@@ -89,7 +89,7 @@ proc genMatcher(a: DFA; s, i, bodies: NimNode): NimNode {.compileTime.} =
 template `/.`(x: string): string =
   (when defined(posix): "./" & x else: x)
 
-macro match*(s: cstring|string; pos: int; sections: untyped): untyped =
+macro match*(s: cstring|string; pos: int; sections: varargs[untyped]): untyped =
   var res: seq[string] = @[]
   for sec in sections.children:
     expectKind sec, nnkOfBranch

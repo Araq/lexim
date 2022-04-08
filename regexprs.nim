@@ -142,8 +142,8 @@ proc newCapture*(a: PRegExpr): PRegExpr =
 
 proc getNext(buf: string; c: var ReCtx): char =
   if reExtended in c.flags:
-    while buf[c.pos] in {' ', '\t'}: inc(c.pos)
-  result = buf[c.pos]
+    while c.pos < buf.len and buf[c.pos] in {' ', '\t'}: inc(c.pos)
+  result = if c.pos < buf.len: buf[c.pos] else: '\0'
 
 proc error(msg: string) {.noinline.} =
   raise newException(RegexError, msg)
@@ -151,12 +151,13 @@ proc error(msg: string) {.noinline.} =
 proc getChar(buf: string; c: var ReCtx; inClass: bool): PRegExpr =
   var val, i: int
   if reExtended in c.flags and not inClass:
-    while buf[c.pos] in {' ', '\t'}: inc(c.pos)
-  if buf[c.pos] != '\\':
+    while c.pos < buf.len and buf[c.pos] in {' ', '\t'}: inc(c.pos)
+  if c.pos < buf.len and buf[c.pos] != '\\':
     result = charExpr(buf[c.pos])
     inc(c.pos)
   else:
-    case buf[c.pos+1]
+    let ch = if c.pos+1 < buf.len: buf[c.pos+1] else: '\0'
+    case ch
     of 'n':
       result = altExpr(strExpr("\C\L"), charExpr('\L'), charExpr('\C'))
       inc(c.pos, 2)
@@ -210,11 +211,11 @@ proc getChar(buf: string; c: var ReCtx; inClass: bool): PRegExpr =
       result = cclassExpr({'\1'..'\255'} - wordChars)
       inc(c.pos, 2)
     of '0'..'9':
-      let startsWithZero = buf[c.pos+1] == '0'
-      val = ord(buf[c.pos + 1]) - ord('0')
+      let startsWithZero = ch == '0'
+      val = ord(ch) - ord('0')
       inc(c.pos, 2)
       i = 1
-      while (i <= 4) and (buf[c.pos] in {'0'..'9'}):
+      while (i <= 4) and c.pos < buf.len and (buf[c.pos] in {'0'..'9'}):
         val = val * 10 + ord(buf[c.pos]) - ord('0')
         inc(c.pos)
         inc(i)
@@ -223,16 +224,16 @@ proc getChar(buf: string; c: var ReCtx; inClass: bool): PRegExpr =
       else:
         result = backrefExpr(val)
     else:
-      if buf[c.pos + 1] in {'\0'..'\x1F'}:
-        error "invalid character #" & toHex(buf[c.pos+1].ord, 2)
+      if ch in {'\0'..'\x1F'}:
+        error "invalid character #" & toHex(ch.ord, 2)
       else:
-        result = charExpr(buf[c.pos + 1])
+        result = charExpr(ch)
         inc(c.pos, 2)
 
 proc parseStr(buf: string; c: var ReCtx): PRegExpr =
   var s = ""
   inc(c.pos)                    # skip "
-  while buf[c.pos] != '\"':
+  while c.pos < buf.len and buf[c.pos] != '\"':
     if buf[c.pos] in {'\0', '\C', '\L'}:
       error "\" expected"
     let al = getChar(buf, c,false)
@@ -247,20 +248,20 @@ proc parseCClass(buf: string; c: var ReCtx): PRegExpr =
     caret: bool
     cc: set[char]
   inc(c.pos)                    # skip [
-  if buf[c.pos] == '^':
+  if c.pos < buf.len and buf[c.pos] == '^':
     caret = true
     inc(c.pos)
   else:
     caret = false
-  while buf[c.pos] != ']':
+  while c.pos < buf.len and buf[c.pos] != ']':
     if buf[c.pos] in {'\0', '\C', '\L'}:
       error "] expected"
     let a = getChar(buf, c, true)
     if a.kind == reChar:
       incl(cc, a.c)
-      if buf[c.pos] == '-':
+      if c.pos < buf.len and buf[c.pos] == '-':
         inc(c.pos)
-        if buf[c.pos] == ']':
+        if c.pos < buf.len and buf[c.pos] == ']':
           incl(cc, '-')
           break
         let b = getChar(buf, c, true)
@@ -275,25 +276,25 @@ proc parseCClass(buf: string; c: var ReCtx): PRegExpr =
       cc = cc + a.cc[]
     else:
       error "invalid regular expression " & buf
-  if buf[c.pos] == ']': inc(c.pos)
+  if c.pos < buf.len and buf[c.pos] == ']': inc(c.pos)
   else: error "] expected"
   if caret: result = cclassExpr({'\1'..'\xFF'} - cc)
   else: result = cclassExpr(cc)
 
 proc parseNum(buf: string; c: var ReCtx): int =
   result = 0
-  if buf[c.pos] in {'0'..'9'}:
+  if c.pos < buf.len and buf[c.pos] in {'0'..'9'}:
     while true:
       result = result * 10 + ord(buf[c.pos]) - ord('0')
       inc(c.pos)
-      if buf[c.pos] notin {'0'..'9'}: break
+      if c.pos >= buf.len or buf[c.pos] notin {'0'..'9'}: break
   else:
     error "number expected"
 
 proc parseIdent(buf: string; c: var ReCtx): string =
   result = ""
-  if buf[c.pos] in {'a'..'z', 'A'..'Z', '_'}:
-    while true:
+  if c.pos < buf.len and buf[c.pos] in {'a'..'z', 'A'..'Z', '_'}:
+    while c.pos < buf.len:
       case buf[c.pos]
       of 'a'..'z', 'A'..'Z', '0'..'9':
         result.add toUpperAscii(buf[c.pos])
@@ -324,7 +325,7 @@ proc factor(buf: string; c: var ReCtx): PRegExpr =
   of '(':
     inc(c.pos)                  # skip (
     var isCapture = reNoCaptures notin c.flags
-    if buf[c.pos] == '?' and buf[c.pos+1] == ':':
+    if c.pos+1 < buf.len and buf[c.pos] == '?' and buf[c.pos+1] == ':':
       inc c.pos, 2
       isCapture = false
     result = parseRegExpr(buf, c)
@@ -338,7 +339,7 @@ proc factor(buf: string; c: var ReCtx): PRegExpr =
     result = getChar(buf, c, false)
   of '{':
     inc(c.pos)                  # skip {
-    while buf[c.pos] in {' ', '\t'}: inc(c.pos)
+    while c.pos < buf.len and buf[c.pos] in {' ', '\t'}: inc(c.pos)
     result = parseMacroCall(buf, c)
     if getNext(buf, c) == '}': inc(c.pos)
     else: error "} expected"
@@ -351,7 +352,7 @@ proc factor(buf: string; c: var ReCtx): PRegExpr =
     result = newExpr(reBegin)
     inc(c.pos)
   else:
-    result = charExpr(buf[c.pos])
+    result = charExpr(if c.pos < buf.len: buf[c.pos] else: '\0')
     inc(c.pos)
   while true:
     case getNext(buf, c)
@@ -380,7 +381,7 @@ proc factor(buf: string; c: var ReCtx): PRegExpr =
         let m = parseNum(buf, c)
         if getNext(buf, c) == ',':
           inc(c.pos)
-          while buf[c.pos] in {' ', '\t'}: inc(c.pos)
+          while c.pos < buf.len and buf[c.pos] in {' ', '\t'}: inc(c.pos)
           n = parseNum(buf, c)
         else:
           n = m
