@@ -8,7 +8,7 @@
 #
 
 import
-  strutils, regexprs
+  regexprs
 
 const
   maxLabel* = 255
@@ -57,27 +57,21 @@ proc initNFA(a: var NFA) = discard
 proc initDFA(a: var DFA) = discard
 
 proc addTrans(src: var seq[NFA_Edge]; c: Alphabet; d: TLabel) =
-  if src.isNil:
-    src = @[NFA_Edge(cond: c, dest: {d})]
-  else:
-    for i in 0 .. high(src):
-      if src[i].cond == c:
-        src[i].dest.incl d
-        return
-    src.add(NFA_Edge(cond: c, dest: {d}))
-    if c.kind == reEps and src.len != 1:
-      # make epsilon always the first transition to speed up later passes:
-      swap(src[0], src[src.high])
+  for i in 0 .. high(src):
+    if src[i].cond == c:
+      src[i].dest.incl d
+      return
+  src.add(NFA_Edge(cond: c, dest: {d}))
+  if c.kind == reEps and src.len != 1:
+    # make epsilon always the first transition to speed up later passes:
+    swap(src[0], src[src.high])
 
 proc addTrans(src: var seq[DFA_Edge]; c: Alphabet; d: TLabel) =
-  if src.isNil:
-    src = @[DFA_Edge(cond: c, dest: d)]
-  else:
-    for i in 0 .. high(src):
-      if src[i].cond == c:
-        src[i].dest = d
-        return
-    src.add(DFA_Edge(cond: c, dest: d))
+  for i in 0 .. high(src):
+    if src[i].cond == c:
+      src[i].dest = d
+      return
+  src.add(DFA_Edge(cond: c, dest: d))
 
 proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
   # helper that is recursive; returns the new current state
@@ -96,7 +90,7 @@ proc auxRegExprToNFA(r: PRegExpr; a: var NFA; currState: int): int =
     inc(result)
   of reStr:
     # string node
-    for i in countup(0, <len(r.s)):
+    for i in countup(0, len(r.s)-1):
       addTrans(a.trans[result], Alphabet(kind: reChar, val: r.s[i]), result + 1)
       inc(result)
   of reCat:
@@ -156,7 +150,7 @@ proc regExprToNFA*(r: PRegExpr; a: var NFA) =
 
 proc allTransitions*(a: DFA; source, dest: TLabel): (seq[Alphabet], set[char]) =
   result[0] = @[]
-  if not a.trans[source].isNil:
+  if a.trans[source].len > 0:
     result[1] = {}
     var card = 0
     var lastChar = -1
@@ -173,7 +167,7 @@ proc allTransitions*(a: DFA; source, dest: TLabel): (seq[Alphabet], set[char]) =
       result[0].add Alphabet(kind: reChar, val: char lastChar)
 
 iterator allDests*(a: DFA; source: TLabel): TLabel =
-  if not a.trans[source].isNil:
+  if a.trans[source].len > 0:
     # use a set to eliminate duplicates:
     var dests: TLabelSet
     for x in a.trans[source]: dests.incl x.dest
@@ -188,17 +182,17 @@ proc closure(a: NFA; S: TLabelSet): TLabelSet =
     res = result
     for L in countup(0, a.stateCount):
       if L in res:
-        if not a.trans[L].isNil and a.trans[L][0].cond.kind == reEps:
+        if a.trans[L].len > 0 and a.trans[L][0].cond.kind == reEps:
           result = result + a.trans[L][0].dest
     if res == result: break
 
 proc getDest(a: seq[NFA_Edge]; c: Alphabet): TLabelSet =
-  if a.isNil: return
+  if a.len == 0: return
   for t in a:
     if t.cond.kind == c.kind and t.cond.val == c.val: return t.dest
 
 proc getDest(a: seq[DFA_Edge]; c: Alphabet): TLabel =
-  if a.isNil: return
+  if a.len == 0: return
   for t in a:
     if t.cond.kind == c.kind and t.cond.val == c.val: return t.dest
 

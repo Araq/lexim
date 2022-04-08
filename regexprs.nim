@@ -115,7 +115,7 @@ proc altExpr*(a, b: PRegExpr): PRegExpr =
 
 proc altExpr*(a: varargs[PRegExpr]): PRegExpr =
   result = altExpr(a[0], a[1])
-  for i in 2 .. <a.len:
+  for i in 2 ..< a.len:
     result = result.altExpr(a[i])
 
 proc mnExpr*(r: PRegExpr; m, n: int): PRegExpr =
@@ -296,7 +296,7 @@ proc parseIdent(buf: string; c: var ReCtx): string =
     while true:
       case buf[c.pos]
       of 'a'..'z', 'A'..'Z', '0'..'9':
-        result.add toUpper(buf[c.pos])
+        result.add toUpperAscii(buf[c.pos])
         inc(c.pos)
       of '_':
         inc(c.pos)              # ignore _
