@@ -18,7 +18,18 @@ template bench(text, doWork: untyped) =
 
 import re, strutils
 
-let thaRe = re.re("[Pp]leas.*?uring", {reDotAll, reStudy})
+let thaRe = re.re("[Pp]leasuring", {reDotAll, reStudy})
+
+import lexim
+proc lex(input: string): int =
+  var pos = 0
+  while pos < input.len:
+    lexim.match input, pos:
+    of r"[Pp]leasuring":
+      return pos
+    of r".":
+      discard
+  return -1
 
 proc main =
   let inp = readFile("benchdata.txt")
@@ -35,8 +46,13 @@ proc main =
       for i in 1..100:
         discard find(inp, "pleasuring")
 
+    bench "lexer":
+      for i in 1..100:
+        discard lex(inp)
+
     echo matchLen(inp, bc)
     echo re.find(inp, thaRe)+len"pleasuring"
     echo find(inp, "pleasuring")+len"pleasuring"
+    echo lex(inp) # +len"pleasuring"
 
 main()
