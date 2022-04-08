@@ -8,7 +8,7 @@
 #
 
 ## Translates the DFA into a bytecode and then runs the bytecode.
-import unsigned, nfa, strutils, intsets, regexprs
+import nfa, strutils, intsets, regexprs
 
 type
   Instr* = distinct uint32
@@ -25,13 +25,13 @@ type
     opcCaptureEnd   # end of capture ')'
     opcBackref      # \\1 match
 
-  Bytecode* {.shallow.} = object
+  Bytecode* = object
     code*: seq[Instr]
     data*: seq[set[char]]
     startAt*, captures*: int
 
-template opcode*(x: Instr): Opcode {.immediate.} = Opcode(x.uint32 and 0xff'u32)
-template regBx*(x: Instr): int {.immediate.} = (x.uint32 shr 16'u32).int
+template opcode*(x: Instr): Opcode = Opcode(x.uint32 and 0xff'u32)
+template regBx*(x: Instr): int = (x.uint32 shr 16'u32).int
 
 proc codeListing(c: Bytecode, result: var string, start=0; last = -1) =
   # first iteration: compute all necessary labels:
@@ -170,7 +170,7 @@ proc execBytecode*(m: Bytecode; input: string;
       # we *know* the next instruction is a TJmp:
       let next = m.code[pc+1]
       assert next.opcode == opcTJmp
-      if input[sp] in m.data[arg]:
+      if sp < input.len and input[sp] in m.data[arg]:
         pc = next.regBx
         inc sp
       else:
@@ -179,7 +179,7 @@ proc execBytecode*(m: Bytecode; input: string;
       # we *know* the next instruction is a TJmp:
       let next = m.code[pc+1]
       assert next.opcode == opcTJmp
-      if input[sp] == chr(arg):
+      if sp < input.len and input[sp] == chr(arg):
         pc = next.regBx
         inc sp
       else:
@@ -263,7 +263,7 @@ proc match*(input: string; r: Bytecode; start=0): bool =
   let (isMatch, len) = execBytecode(r, input, captures, start)
   result = isMatch > 0
 
-template `=~` *(s: string, pattern: Bytecode): expr =
+template `=~`*(s: string, pattern: Bytecode): untyped =
   ## This calls ``match`` with an implicit declared ``matches`` seq that
   ## can be used in the scope of the ``=~`` call:
   ##
