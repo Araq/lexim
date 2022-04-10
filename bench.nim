@@ -31,6 +31,15 @@ proc lex(input: string): int =
       discard
   return -1
 
+import std/strscans
+proc scan(input: string): int =
+  var pos = 0
+  while pos < input.len:
+    if scanp(input, pos, {'P', 'p'}, "leasuring"):
+      return pos
+    inc pos
+  return -1
+
 proc main =
   let inp = readFile("benchdata.txt")
   when true:
@@ -50,9 +59,14 @@ proc main =
       for i in 1..100:
         discard lex(inp)
 
+    bench "scanp":
+      for i in 1..100:
+        discard scan(inp)
+
     echo matchLen(inp, bc)
     echo re.find(inp, thaRe)+len"pleasuring"
     echo find(inp, "pleasuring")+len"pleasuring"
     echo lex(inp) # +len"pleasuring"
+    echo scan(inp) # +len"pleasuring"
 
 main()
