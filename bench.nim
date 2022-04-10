@@ -40,6 +40,13 @@ proc scan(input: string): int =
     inc pos
   return -1
 
+import npeg
+proc pegs(input: string): int =
+  let p = peg search:
+    search <- @({'P', 'p'} * "leasuring")
+  let r = p.match(input)
+  return if r.ok: r.matchLen else: -1
+
 proc main =
   let inp = readFile("benchdata.txt")
   when true:
@@ -63,10 +70,15 @@ proc main =
       for i in 1..100:
         discard scan(inp)
 
+    bench "npeg":
+      for i in 1..100:
+        discard pegs(inp)
+
     echo matchLen(inp, bc)
     echo re.find(inp, thaRe)+len"pleasuring"
     echo find(inp, "pleasuring")+len"pleasuring"
     echo lex(inp) # +len"pleasuring"
     echo scan(inp) # +len"pleasuring"
+    echo pegs(inp) # +len"pleasuring"
 
 main()
